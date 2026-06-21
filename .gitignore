@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# 本地配置 / 含密钥的运行时配置，不入库
+y-plan.config.json
+vendor/yce/.env
+
+# 依赖
+node_modules/
+
+# 临时
+*.log
