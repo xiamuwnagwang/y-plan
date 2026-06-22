@@ -78,7 +78,6 @@ while [[ $# -gt 0 ]]; do
     --enable-yce) ENABLE_YCE="1"; shift ;;
     --disable-yce) ENABLE_YCE="0"; shift ;;
     --yce-mode) YCE_MODE="${2:-plan}"; shift 2 ;;
-    --yce-script) shift 2 ;;
     --model) MODELS="${MODELS:+$MODELS,}${2:-}"; shift 2 ;;
     --models) MODELS="${MODELS:+$MODELS,}${2:-}"; shift 2 ;;
     --agent-config) AGENT_CONFIG="${2:-./agents/y-plan-agents.json}"; shift 2 ;;

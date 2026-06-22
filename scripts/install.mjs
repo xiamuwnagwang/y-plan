@@ -6,12 +6,12 @@ import { stdin as input, stdout as output } from "node:process";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = import.meta.url.startsWith("file:///$bunfs/")
+  ? dirname(process.execPath)
+  : dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, "..");
 const configPath = resolve(skillDir, "y-plan.config.json");
 const defaultAgentConfig = "./agents/y-plan-agents.json";
-const bundledYceScript = resolve(skillDir, "vendor/yce/scripts/yce.js");
-const defaultYceScript = bundledYceScript;
 
 const CLI_DEFS = [
   {
@@ -207,7 +207,6 @@ async function main() {
       models: cliArgs.models.length > 0 ? cliArgs.models : existing.models || defaultModelEntries(),
       yceEnabled: cliArgs.yceEnabled ?? existing.yce?.enabled ?? false,
       yceMode: cliArgs.yceMode || existing.yce?.mode || "plan",
-      yceScript: defaultYceScript,
       agentConfig: cliArgs.agentConfig || existing.agentConfig || defaultAgentConfig,
     });
     return;
@@ -234,7 +233,6 @@ async function main() {
       models: finalModels,
       yceEnabled: yceConfig.enabled,
       yceMode: yceConfig.mode,
-      yceScript: yceConfig.script,
       agentConfig: cliArgs.agentConfig || existing.agentConfig || defaultAgentConfig,
     });
   } finally {
@@ -367,7 +365,7 @@ async function configureYce(rl, existing) {
   const status = existsSync(resolveMaybeRelativeToSkillDir(script)) ? "存在" : "未找到";
   console.log(`YCE 脚本固定使用 Y-Plan 内置版本: ${script} (${status})`);
 
-  return { enabled, mode, script: normalizeYceScriptForConfig(script) };
+  return { enabled, mode, script };
 }
 
 function parseArgs(argv) {
@@ -392,8 +390,6 @@ function parseArgs(argv) {
       parsed.yceEnabled = false;
     } else if (arg === "--yce-mode") {
       parsed.yceMode = argv[++i] || "plan";
-    } else if (arg === "--yce-script") {
-      i += 1;
     } else if (arg === "--agent-config") {
       parsed.agentConfig = argv[++i] || parsed.agentConfig;
     } else if (arg === "--model") {

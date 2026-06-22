@@ -10,7 +10,6 @@ param(
   [switch]$DisableYce,
   [ValidateSet("plan", "auto", "enhance", "search")]
   [string]$YceMode = "plan",
-  [string]$YceScript = "",
   [string]$Model = "",
   [string]$Models = "",
   [string]$AgentConfig = "./agents/y-plan-agents.json",

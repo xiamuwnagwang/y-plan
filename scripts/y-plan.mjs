@@ -4,7 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = import.meta.url.startsWith("file:///$bunfs/")
+  ? dirname(process.execPath)
+  : dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, "..");
 const defaultConfigPath = resolve(skillDir, "y-plan.config.json");
 const defaultAgentConfigPath = resolve(skillDir, "agents/y-plan-agents.json");
@@ -13,6 +15,11 @@ const defaultYceScript = bundledYceScript;
 const bundledMattSkillsRoot = resolve(skillDir, "vendor/mattpocock-skills/skills");
 const defaultSkillsRoot = bundledMattSkillsRoot;
 const planningCoreReferencePath = resolve(skillDir, "references/y-plan-planning-core.md");
+const DEFAULT_TIMEOUT_MS = 300000;
+const DEFAULT_API_TIMEOUT_MS = 180000;
+const DEFAULT_MAX_TOKENS = 4096;
+const PROMPT_TRIM_CHARS = 7000;
+const PLANNING_CORE_TRIM_CHARS = 5000;
 
 const RUNTIME_ALIASES = new Map([
   ["claude", "claude-api"],
@@ -246,17 +253,6 @@ function parseArgs(argv) {
       args.yceMode = argv[++i] || "plan";
       continue;
     }
-    if (arg === "--yce-script") {
-      i += 1;
-      continue;
-    }
-    if (arg === "--format" || arg === "--output") {
-      i += 1;
-      continue;
-    }
-    if (arg === "--md" || arg === "--markdown" || arg === "--xml") {
-      continue;
-    }
     if (arg === "--history") {
       args.history = argv[++i] || "";
       continue;
@@ -336,10 +332,6 @@ function resolveModelChoices(args, config, agentConfig = {}) {
   }
 
   throw new Error("No models configured. Add a models array to y-plan.config.json or agents/y-plan-agents.json.");
-}
-
-function splitList(value) {
-  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function readFirstExisting(root, relativePaths) {
@@ -459,7 +451,7 @@ function buildIntegratedMattSummary(selected) {
   return selected.map((skill) => `${skill.name}: ${skill.reason}`).join("; ");
 }
 
-function runProcess(command, cwd, { timeoutMs = 180000 } = {}) {
+function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS } = {}) {
   return new Promise((resolvePromise) => {
     const child = spawn(command.bin, command.args, {
       cwd,
@@ -512,7 +504,7 @@ async function runYcePrepass({ args, config, task }) {
 
   const history = args.history || yceConfig.history || `User: ${task}`;
   const mode = args.yceMode || yceConfig.mode || "plan";
-  const timeoutMs = Number(yceConfig.timeoutMs || 300000);
+  const timeoutMs = Number(yceConfig.timeoutMs || DEFAULT_TIMEOUT_MS);
   const runs = [];
 
   const runYce = async (query, yceMode) => {
@@ -659,7 +651,7 @@ function decodeXmlEntities(value) {
     .replaceAll("&amp;", "&");
 }
 
-function trimForPrompt(content, maxChars = 7000) {
+function trimForPrompt(content, maxChars = PROMPT_TRIM_CHARS) {
   if (content.length <= maxChars) return content;
   return `${content.slice(0, maxChars)}\n\n[truncated by y-plan: ${content.length - maxChars} chars omitted]`;
 }
@@ -713,7 +705,7 @@ Y-Plan native planning role config:
 ${agentPlanningGuidance}
 
 Y-Plan planning core reference:
-${planningCoreReference ? trimForPrompt(planningCoreReference, 5000) : "[not bundled]"}
+${planningCoreReference ? trimForPrompt(planningCoreReference, PLANNING_CORE_TRIM_CHARS) : "[not bundled]"}
 
 Loaded mattpocock/skills:
 ${selected.map((skill) => `- ${skill.name}: ${skill.reason}`).join("\n")}
@@ -832,7 +824,7 @@ async function runApiModel(modelChoice, prompt) {
   try {
     const { url, headers, body } = buildApiRequest(modelChoice, prompt);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Number(modelChoice.timeoutMs || 180000));
+    const timer = setTimeout(() => controller.abort(), Number(modelChoice.timeoutMs || DEFAULT_API_TIMEOUT_MS));
     const response = await fetch(url, {
       method: "POST",
       headers,
@@ -869,7 +861,7 @@ function buildApiRequest(modelChoice, prompt) {
       },
       body: {
         model,
-        max_tokens: Number(modelChoice.maxTokens || 4096),
+        max_tokens: Number(modelChoice.maxTokens || DEFAULT_MAX_TOKENS),
         messages: [{ role: "user", content: prompt }],
         ...(modelChoice.temperature == null ? {} : { temperature: Number(modelChoice.temperature) }),
       },
@@ -889,7 +881,7 @@ function buildApiRequest(modelChoice, prompt) {
       body: {
         model,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: Number(modelChoice.maxTokens || 4096),
+        max_tokens: Number(modelChoice.maxTokens || DEFAULT_MAX_TOKENS),
         ...(modelChoice.temperature == null ? {} : { temperature: Number(modelChoice.temperature) }),
       },
     };
@@ -908,7 +900,7 @@ function buildApiRequest(modelChoice, prompt) {
       body: {
         model,
         input: [{ role: "user", content: prompt }],
-        max_output_tokens: Number(modelChoice.maxTokens || 4096),
+        max_output_tokens: Number(modelChoice.maxTokens || DEFAULT_MAX_TOKENS),
         ...(modelChoice.temperature == null ? {} : { temperature: Number(modelChoice.temperature) }),
       },
     };
@@ -991,10 +983,6 @@ function extractApiText(runtime, responseText) {
     }).join("");
   }
   return "";
-}
-
-function cdata(value) {
-  return String(value || "").replaceAll("]]>", "]]]]><![CDATA[>");
 }
 
 function extractYPlanBlock(stdout) {
@@ -1153,27 +1141,6 @@ function cleanPlanText(value) {
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim());
-}
-
-function trimForMarkdownFence(value, maxChars = 12000) {
-  const text = String(value || "").trim();
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n\n[truncated by y-plan: ${text.length - maxChars} chars omitted]`;
-}
-
-function escapeAttr(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("\"", "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function escapeText(value) {
-  return String(value || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
 }
 
 async function main() {

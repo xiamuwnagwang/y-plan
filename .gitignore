@@ -1,5 +1,22 @@
 # macOS
 .DS_Store
+._*
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# Editors
+*.swp
+*.swo
+*.swn
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
 
 # 本地配置 / 含密钥的运行时配置，不入库
 y-plan.config.json
@@ -8,5 +25,12 @@ vendor/yce/.env
 # 依赖
 node_modules/
 
+# 构建产物
+bin/
+dist/
+
 # 临时
 *.log
+*.tmp
+*.bak
+*.orig
