@@ -12,7 +12,6 @@ param(
   [string]$YceMode = "plan",
   [string]$Model = "",
   [string]$Models = "",
-  [string]$AgentConfig = "./agents/y-plan-agents.json",
   [switch]$Help
 )
 
@@ -72,6 +71,117 @@ function Resolve-DestDir {
   return (Join-Path (Resolve-DestRoot) $SkillName)
 }
 
+function Get-YceEngineDir([string]$Root) {
+  return (Join-Path $Root "vendor/yce/vendor/yce-engine")
+}
+
+function Get-YceEngineRipgrepPath([string]$EngineDir) {
+  $resolver = Join-Path $EngineDir "lib/ripgrep.mjs"
+  if (-not (Test-Path $resolver)) { return $null }
+
+  Push-Location $EngineDir
+  try {
+    $script = @'
+import { existsSync } from "node:fs";
+import { resolveRipgrepPath } from "./lib/ripgrep.mjs";
+const p = resolveRipgrepPath();
+if (!p || p === "rg" || p === "rg.exe" || !existsSync(p)) process.exit(1);
+console.log(p);
+'@
+    $out = & node --input-type=module -e $script 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return ($out | Select-Object -First 1)
+  } catch {
+    return $null
+  } finally {
+    Pop-Location
+  }
+}
+
+function Get-ExpectedRipgrepPackageName([string]$EngineDir) {
+  Push-Location $EngineDir
+  try {
+    $out = & node -e 'const arch = process.env.npm_config_arch || process.arch; console.log(`@vscode/ripgrep-${process.platform}-${arch}`);' 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) { return ($out | Select-Object -First 1) }
+  } catch {
+  } finally {
+    Pop-Location
+  }
+  return "@vscode/ripgrep-<platform>"
+}
+
+function Get-ExpectedRipgrepPackageSpec([string]$EngineDir) {
+  Push-Location $EngineDir
+  try {
+    $script = @'
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const arch = process.env.npm_config_arch || process.arch;
+const packageName = `@vscode/ripgrep-${process.platform}-${arch}`;
+let version = "";
+
+try {
+  const entryPath = require.resolve("@vscode/ripgrep");
+  const packageJsonPath = join(dirname(dirname(entryPath)), "package.json");
+  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  version = pkg.optionalDependencies?.[packageName] || pkg.version || "";
+} catch {
+}
+
+console.log(version ? `${packageName}@${version}` : packageName);
+'@
+    $out = & node --input-type=module -e $script 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) { return ($out | Select-Object -First 1) }
+  } catch {
+  } finally {
+    Pop-Location
+  }
+  return (Get-ExpectedRipgrepPackageName $EngineDir)
+}
+
+function Ensure-YceEngineRipgrep([string]$Root, [string]$Label = "Y-Plan") {
+  $engineDir = Get-YceEngineDir $Root
+  $packageJson = Join-Path $engineDir "package.json"
+  if (-not (Test-Path $packageJson)) {
+    Write-Output "WARN ${Label}: 内置 YCE yce-engine 缺失，跳过 ripgrep 修复"
+    return
+  }
+
+  $rgPath = Get-YceEngineRipgrepPath $engineDir
+  if ($rgPath) {
+    Write-Output "OK ${Label}: 内置 YCE ripgrep 已就绪: $rgPath"
+    return
+  }
+
+  $expectedPackage = Get-ExpectedRipgrepPackageName $engineDir
+  $npmPath = Get-Command npm.cmd -ErrorAction SilentlyContinue
+  if (-not $npmPath) { $npmPath = Get-Command npm -ErrorAction SilentlyContinue }
+  if (-not $npmPath) {
+    throw "${Label}: 未安装 npm，无法自动补齐 $expectedPackage"
+  }
+
+  Write-Output "INFO ${Label}: 补齐内置 YCE 当前平台 ripgrep ($expectedPackage)"
+  Push-Location $engineDir
+  try {
+    & $npmPath.Source install --omit=dev --include=optional --no-audit --fund=false
+    if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+    $rgPath = Get-YceEngineRipgrepPath $engineDir
+    if (-not $rgPath) {
+      $platformSpec = Get-ExpectedRipgrepPackageSpec $engineDir
+      & $npmPath.Source install $platformSpec --no-save --omit=dev --include=optional --no-audit --fund=false
+      if ($LASTEXITCODE -ne 0) { throw "npm install $platformSpec failed with exit code $LASTEXITCODE" }
+      $rgPath = Get-YceEngineRipgrepPath $engineDir
+    }
+    if (-not $rgPath) { throw "当前平台 ripgrep 仍不可用（预期 $expectedPackage）" }
+    Write-Output "OK ${Label}: 内置 YCE ripgrep 已就绪: $rgPath"
+  } finally {
+    Pop-Location
+  }
+}
+
 function Copy-SkillTo([string]$DestRoot, [string]$Label) {
   $DestDir = Join-Path $DestRoot $SkillName
   New-Item -ItemType Directory -Force -Path $DestRoot | Out-Null
@@ -84,6 +194,7 @@ function Copy-SkillTo([string]$DestRoot, [string]$Label) {
   foreach ($Item in $Items) {
     Copy-Item -Recurse -Force -Path $Item.FullName -Destination $DestDir
   }
+  Ensure-YceEngineRipgrep $DestDir $Label
   Write-Output "$Label <- Y-Plan"
   Write-Output $DestDir
 }
@@ -100,7 +211,7 @@ function Invoke-Setup([string]$Root) {
   if ($Model) { $mergedModels += $Model }
   if ($Models) { $mergedModels += $Models }
   if ($mergedModels.Count -gt 0) { $ArgsList += @("--models", ($mergedModels -join ",")) }
-  $ArgsList += @("--yce-mode", $YceMode, "--agent-config", $AgentConfig)
+  $ArgsList += @("--yce-mode", $YceMode)
   node (Join-Path $Root "scripts/install.mjs") @ArgsList
 }
 
@@ -112,18 +223,16 @@ function Invoke-Check {
     "scripts/install.mjs",
     "references/platform-prompts.md",
     "vendor/yce/scripts/yce.js",
-    "vendor/mattpocock-skills/skills/engineering/codebase-design/SKILL.md",
-    "agents/y-plan-agents.json"
+    "vendor/mattpocock-skills/skills/engineering/codebase-design/SKILL.md"
   )
   foreach ($Rel in $Checks) {
     $Full = Join-Path $ScriptDir $Rel
     if (Test-Path $Full) { Write-Output "OK $Rel" } else { throw "缺失 $Rel" }
   }
+  Ensure-YceEngineRipgrep $ScriptDir "源目录"
   node --check (Join-Path $ScriptDir "scripts/y-plan.mjs") | Out-Null
   node --check (Join-Path $ScriptDir "scripts/install.mjs") | Out-Null
-  $AgentJson = Get-Content -Raw (Join-Path $ScriptDir "agents/y-plan-agents.json")
-  $null = $AgentJson | ConvertFrom-Json
-  Write-Output "OK 脚本语法和 agent JSON 正常"
+  Write-Output "OK 脚本语法正常"
   if (Test-Path $DestDir) { Write-Output "OK 已安装目录存在: $DestDir" } else { Write-Output "WARN 未找到已安装目录: $DestDir" }
 }
 

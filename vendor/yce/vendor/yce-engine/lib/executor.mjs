@@ -9,31 +9,10 @@ import { execFileSync, execFile as execFileCb } from "node:child_process";
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, resolve, relative, sep, basename } from "node:path";
 import { promisify } from "node:util";
-import { createRequire } from "node:module";
-import treeNodeCli from "tree-node-cli";
+import { buildDirectoryTree } from "./tree-builder.mjs";
+import { resolveRipgrepPath } from "./ripgrep.mjs";
 
 const execFileAsync = promisify(execFileCb);
-
-const require = createRequire(import.meta.url);
-function resolveRipgrepPath() {
-  const arch = process.env.npm_config_arch || process.arch;
-  const binaryName = process.platform === "win32" ? "rg.exe" : "rg";
-  const platformPkg = `@vscode/ripgrep-${process.platform}-${arch}`;
-
-  try {
-    return require.resolve(`${platformPkg}/bin/${binaryName}`);
-  } catch {
-    // Packaged installs may carry node_modules from another platform. In that
-    // case do not fail during module import; let the command fall back to a
-    // system rg if available, while install scripts can repair node_modules.
-  }
-
-  try {
-    return require.resolve(`@vscode/ripgrep/bin/${binaryName}`);
-  } catch {
-    return "rg";
-  }
-}
 
 const rgPath = resolveRipgrepPath();
 
@@ -305,22 +284,12 @@ export class ToolExecutor {
     }
 
     try {
-      const opts = {};
-      if (levels) opts.maxDepth = levels;
-      let stdout = treeNodeCli(rp, opts);
-      // Two-step normalization:
-      // 1. _remap: replace absolute project root with /codebase globally
-      stdout = this._remap(stdout);
-      // 2. Handle basename root line: tree-node-cli outputs the directory
-      //    basename as the first line (e.g. "supabase"), which _remap won't
-      //    catch since it's not the full absolute path. Replace with the
-      //    virtual path the AI requested (already /codebase/...).
-      const dirName = rp.split("/").pop() || rp.split("\\").pop() || rp;
-      const lines = stdout.split("\n");
-      if (lines[0] === dirName) {
-        lines[0] = path;
-        stdout = lines.join("\n");
-      }
+      const virtualRoot = this._remap(rp);
+      const stdout = buildDirectoryTree(rp, {
+        maxDepth: levels || 3,
+        virtualRoot,
+        maxBytes: 256 * 1024,
+      });
       return ToolExecutor._truncate(stdout);
     } catch {
       return `Error: failed to generate tree for ${path}`;

@@ -15,7 +15,6 @@ import { resolve, join, relative, sep, isAbsolute } from "node:path";
 import { gzipSync } from "node:zlib";
 import { randomUUID } from "node:crypto";
 import { platform, arch, release, version as osVersion, hostname, cpus, totalmem } from "node:os";
-import treeNodeCli from "tree-node-cli";
 
 import {
   ProtobufEncoder,
@@ -25,6 +24,7 @@ import {
 } from "./protobuf.mjs";
 import { ToolExecutor } from "./executor.mjs";
 import { scoreDirectories, tokenize as tokenizeBM25 } from "./directory-scorer.mjs";
+import { buildDirectoryTree } from "./tree-builder.mjs";
 
 // ─── Error Classification ──────────────────────────────────
 
@@ -1250,7 +1250,7 @@ const MAX_TREE_BYTES = 250 * 1024;
 
 /**
  * Convert an exclude pattern (directory/file name or simple glob) to RegExp
- * for tree-node-cli's exclude option.
+ * for directory tree filtering.
  * @param {string} pattern - e.g. "node_modules", "dist", "*.min.*"
  * @returns {RegExp}
  */
@@ -1299,18 +1299,6 @@ function _suggestTreeDepth(projectRoot) {
   return 2;
 }
 
-function _normalizeTreeRoot(treeStr, absRoot, virtualRoot = "/codebase") {
-  const rootPattern = new RegExp(absRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
-  let out = String(treeStr || "").replace(rootPattern, virtualRoot);
-  const lines = out.split("\n");
-  const dirName = absRoot.split("/").pop() || absRoot.split("\\").pop() || absRoot;
-  if (lines[0] === dirName) {
-    lines[0] = virtualRoot;
-    out = lines.join("\n");
-  }
-  return out;
-}
-
 /**
  * Get a directory tree of the project with adaptive depth fallback.
  *
@@ -1332,11 +1320,12 @@ function getRepoMap(projectRoot, targetDepth = 3, excludePaths = []) {
 
   for (let L = targetDepth; L >= 1; L--) {
     try {
-      const opts = { maxDepth: L };
-      if (excludeRegexes.length) opts.exclude = excludeRegexes;
-      const stdout = treeNodeCli(projectRoot, opts);
-      // Normalize root to /codebase consistently.
-      let treeStr = _normalizeTreeRoot(stdout, projectRoot, "/codebase");
+      const treeStr = buildDirectoryTree(projectRoot, {
+        maxDepth: L,
+        excludeRegexes,
+        virtualRoot: "/codebase",
+        maxBytes: MAX_TREE_BYTES + 8192,
+      });
       const sizeBytes = Buffer.byteLength(treeStr, "utf-8");
 
       if (sizeBytes <= MAX_TREE_BYTES) {
@@ -1354,7 +1343,7 @@ function getRepoMap(projectRoot, targetDepth = 3, excludePaths = []) {
     if (excludeRegexes.length) {
       entries = entries.filter((e) => !excludeRegexes.some((rx) => rx.test(e)));
     }
-    const treeStr = ["/codebase", ...entries.map((e) => `├── ${e}`)].join("\n");
+    const treeStr = ["/codebase", ...entries.slice(0, 1000).map((e) => `├── ${e}`)].join("\n");
     return { tree: treeStr, depth: 0, sizeBytes: Buffer.byteLength(treeStr, "utf-8"), fellBack: true, autoDepth };
   } catch {
     const treeStr = "/codebase\n(empty or inaccessible)";
@@ -1412,8 +1401,11 @@ function _buildSubtreeForDir(projectRoot, dir, levels = 2) {
   const abs = join(projectRoot, dir);
   const vRoot = `/codebase/${dir}`;
   try {
-    const stdout = treeNodeCli(abs, { maxDepth: levels });
-    return _normalizeTreeRoot(stdout, abs, vRoot);
+    return buildDirectoryTree(abs, {
+      maxDepth: levels,
+      virtualRoot: vRoot,
+      maxBytes: 64 * 1024,
+    });
   } catch {
     return `${vRoot}\n  (failed to generate subtree)`;
   }

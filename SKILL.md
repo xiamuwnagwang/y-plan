@@ -11,7 +11,7 @@ The standalone skill is self-contained:
 
 - `vendor/yce/` provides optional prompt enhancement and code search for improving the final plan.
 - `vendor/mattpocock-skills/` provides planning references for improving the final plan.
-- `agents/y-plan-agents.json` configures Y-Plan native planning phases and default plan-model fallback order.
+- Planning phases and routing are built into `scripts/y-plan.mjs` as the native agent configuration.
 - `references/y-plan-planning-core.md` defines Y-Plan's native role-aware planning workflow, adapted from OpenHarnesses planning discipline but owned by Y-Plan directly.
 
 All bundled skills and YCE output exist to serve one thing: the model must use them as context and return a better final `<y-plan>` result to the caller. They are not separate deliverables. Inside Y-Plan, mattpocock/skills are directly callable planning knowledge, and YCE is the built-in prompt-enhancement and code-search layer.
@@ -27,7 +27,7 @@ All bundled skills and YCE output exist to serve one thing: the model must use t
    - Use `grill-with-docs` or `grill-me` when requirements need interview-style sharpening.
    - Use `prototype` when the safest next step is a throwaway prototype.
    - Use `diagnosing-bugs` or `diagnose` for root-cause or debugging plans.
-3. Read `agents/y-plan-agents.json` and `references/y-plan-planning-core.md` when planning needs phase separation, validation boundaries, configurable planning workflow, or default model fallback.
+3. Use the built-in planning phases and `references/y-plan-planning-core.md` when planning needs phase separation, validation boundaries, or configurable planning workflow.
 4. Use bundled YCE when enabled in `y-plan.config.json` or explicitly requested with `--use-yce`. Default planning mode is `--yce-mode plan`: first enhance the user prompt, then decide from the original + enhanced prompt whether code search is needed, then run code search only when concrete code locations are useful, and finally generate the plan from the original task, enhanced prompt, and search context.
 5. Convert Matt skill instructions, Y-Plan native planning role config, planning-core guidance, and optional YCE output into planning constraints inside the final plan.
 6. For code-related plans, include `file_changes` that say exactly which file or code area should change, what to change there, why, and whether that came from YCE, user input, or unknown context.
@@ -67,7 +67,7 @@ The user does not need to configure every CLI. Y-Plan tries configured models in
 
 ## Model-Backed Invocation
 
-Use the bundled script when the caller wants a model-generated plan. Model fallback order must come from `y-plan.config.json` or `agents/y-plan-agents.json`:
+Use the bundled script when the caller wants a model-generated plan. Model fallback order must come from `y-plan.config.json`:
 
 ```bash
 node scripts/y-plan.mjs "Plan this refactor..."
@@ -87,11 +87,11 @@ Model entries in JSON use this syntax:
 - `qoder/<model>` uses Qoder CLI print mode with `qodercli -p --model <model>`.
 - The script does not accept runtime model override flags. Edit the JSON `models` array to change fallback order.
 
-API model entries must include `url` or `baseUrl` (or `urlEnv`/`baseUrlEnv`). Y-Plan auto-appends the provider suffix when the URL points at a base host or `/v1`: Claude adds `/v1/messages`, OpenAI Chat adds `/v1/chat/completions`, and OpenAI Responses adds `/v1/responses`. Entries can also include `token`/`apiKey`, `tokenEnv`/`apiKeyEnv`, `maxTokens`, and `temperature`; if the token is omitted, Claude reads `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`, and OpenAI reads `OPENAI_API_KEY`.
+API model entries must include `url` or `baseUrl` (or `urlEnv`/`baseUrlEnv`). Y-Plan auto-appends the provider suffix when the URL points at a base host or `/v1`: Claude adds `/v1/messages`, OpenAI Chat adds `/v1/chat/completions`, and OpenAI Responses adds `/v1/responses`. Entries can also include `token`/`apiKey`, `tokenEnv`/`apiKeyEnv`; if the token is omitted, Claude reads `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`, and OpenAI reads `OPENAI_API_KEY`.
 
 Zed and Antigravity load Y-Plan as an in-IDE skill/prompt bundle. Use `references/platform-prompts.md` for per-platform invocation wording.
 
-The script reads the relevant bundled mattpocock/skills `SKILL.md` files, injects them as directly applied planning references, reads `agents/y-plan-agents.json` as the configurable native planning-agent map, adds the Y-Plan planning core reference, optionally injects YCE enhancement/search context, calls the selected model, and returns a Markdown result containing run metadata and the final plan output.
+The script reads the relevant bundled mattpocock/skills `SKILL.md` files, injects them as directly applied planning references, uses the built-in planning-agent map as the native planning-agent configuration, adds the Y-Plan planning core reference, optionally injects YCE enhancement/search context, calls the selected model, and returns a Markdown result containing run metadata and the final plan output.
 
 ## Optional YCE Integration
 
@@ -138,7 +138,7 @@ Every Y-Plan response must be Markdown and include these sections:
 - `goal`: one sentence describing the desired outcome.
 - `assumptions`: only facts supported by user input or inspected context.
 - `selected_skills`: mattpocock/skills used and why.
-- `plan_workflow`: role-aware Y-Plan phases selected from `agents/y-plan-agents.json`, with each phase's input and contribution to the final plan.
+- `plan_workflow`: role-aware Y-Plan phases from the built-in planning configuration, with each phase's input and contribution to the final plan.
 - `file_changes`: concrete files or code areas to modify, with planned change and validation method.
 - `steps`: ordered steps with owner, dependencies, files or areas likely touched, expected output, and validation method.
 - `dependency_graph`: blocking relationships between steps.
@@ -164,7 +164,7 @@ If code search is required but YCE cannot locate enough context, set `file_chang
 - `Y_PLAN_CONFIG`: use a different config file.
 - YCE always uses the bundled `vendor/yce/scripts/yce.js`; external YCE script overrides are intentionally ignored.
 - `Y_PLAN_SKILLS_ROOT`: override bundled mattpocock/skills with another skills root.
-- `Y_PLAN_AGENT_CONFIG`: override `agents/y-plan-agents.json` with another Y-Plan planning-agent config.
+- `Y_PLAN_AGENT_CONFIG`: override the built-in planning-agent config with an external Y-Plan planning-agent config file.
 - `Y_PLAN_QODER_BIN`: override the Qoder executable name.
 - `Y_PLAN_CURSOR_BIN`: override the Cursor Agent executable name.
 - `Y_PLAN_KIRO_BIN`: override the Kiro CLI executable name.

@@ -16,12 +16,14 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "fs";
 import { join, resolve, relative, extname, basename, dirname } from "path";
 import { spawnSync } from "child_process";
+import { resolveRipgrepPath } from "./ripgrep.mjs";
 
 // ─── Constants ───────────────────────────────────────────────
 
 const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 const RRF_K = 60;
+const rgPath = resolveRipgrepPath();
 
 // Field weights for BM25F (from research recommendations)
 const FIELD_WEIGHTS = {
@@ -404,7 +406,7 @@ function probeGrep(projectRoot, topDirs, probeTerms, excludePaths = []) {
     .join("|");
 
   try {
-    const result = spawnSync("rg", [
+    const result = spawnSync(rgPath, [
       "-l", // List matching files only
       "--hidden",
       "-g", `!{${[...excludeSet].join(",")}}`,
@@ -415,7 +417,10 @@ function probeGrep(projectRoot, topDirs, probeTerms, excludePaths = []) {
       encoding: "utf-8",
       timeout: 8000,  // Slightly longer for combined search
       maxBuffer: 2 * 1024 * 1024,
+      env: { ...process.env, RIPGREP_CONFIG_PATH: "" },
     });
+
+    if (result.error) return dirHits;
 
     if (result.stdout) {
       const files = result.stdout.trim().split("\n").filter(Boolean);

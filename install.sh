@@ -12,7 +12,6 @@ ALL_TARGETS=0
 MODELS=""
 ENABLE_YCE=""
 YCE_MODE="plan"
-AGENT_CONFIG="./agents/y-plan-agents.json"
 
 TARGET_KEYS=("agents" "codex" "claude" "opencode" "cursor" "kiro" "zed" "antigravity" "qoder" "path")
 TARGET_LABELS=(".agents" "Codex" "Claude Code" "OpenCode" "Cursor" "Kiro" "Zed Prompts" "Antigravity" "Qoder" "Custom Path")
@@ -65,6 +64,110 @@ ok() { printf '✓ %s\n' "$*"; }
 info() { printf '• %s\n' "$*"; }
 warn() { printf '! %s\n' "$*"; }
 
+get_yce_engine_dir() {
+  local root="$1"
+  printf '%s/vendor/yce/vendor/yce-engine\n' "$root"
+}
+
+get_yce_engine_ripgrep_path() {
+  local engine_dir="$1"
+  [[ -f "$engine_dir/lib/ripgrep.mjs" ]] || return 1
+  (
+    cd "$engine_dir"
+    node --input-type=module -e '
+import { existsSync } from "node:fs";
+import { resolveRipgrepPath } from "./lib/ripgrep.mjs";
+const p = resolveRipgrepPath();
+if (!p || p === "rg" || p === "rg.exe" || !existsSync(p)) process.exit(1);
+console.log(p);
+'
+  ) 2>/dev/null
+}
+
+get_expected_ripgrep_package_name() {
+  local engine_dir="$1"
+  (
+    cd "$engine_dir"
+    node -e 'const arch = process.env.npm_config_arch || process.arch; console.log(`@vscode/ripgrep-${process.platform}-${arch}`);'
+  ) 2>/dev/null || echo "@vscode/ripgrep-<platform>"
+}
+
+get_expected_ripgrep_package_spec() {
+  local engine_dir="$1"
+  (
+    cd "$engine_dir"
+    node --input-type=module -e '
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const arch = process.env.npm_config_arch || process.arch;
+const packageName = `@vscode/ripgrep-${process.platform}-${arch}`;
+let version = "";
+
+try {
+  const entryPath = require.resolve("@vscode/ripgrep");
+  const packageJsonPath = join(dirname(dirname(entryPath)), "package.json");
+  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  version = pkg.optionalDependencies?.[packageName] || pkg.version || "";
+} catch {
+}
+
+console.log(version ? `${packageName}@${version}` : packageName);
+'
+  ) 2>/dev/null || get_expected_ripgrep_package_name "$engine_dir"
+}
+
+ensure_yce_engine_ripgrep() {
+  local root="$1"
+  local label="${2:-Y-Plan}"
+  local engine_dir
+  engine_dir="$(get_yce_engine_dir "$root")"
+
+  if [[ ! -f "$engine_dir/package.json" ]]; then
+    warn "${label}: 内置 YCE yce-engine 缺失，跳过 ripgrep 修复"
+    return 0
+  fi
+
+  local rg_path expected_pkg platform_spec
+  if rg_path="$(get_yce_engine_ripgrep_path "$engine_dir")"; then
+    ok "${label}: 内置 YCE ripgrep 已就绪：$rg_path"
+    return 0
+  fi
+
+  expected_pkg="$(get_expected_ripgrep_package_name "$engine_dir")"
+  if ! command -v npm >/dev/null 2>&1; then
+    warn "${label}: 未安装 npm，无法自动补齐 ${expected_pkg}"
+    return 1
+  fi
+
+  info "${label}: 补齐内置 YCE 当前平台 ripgrep（${expected_pkg}）"
+  (
+    cd "$engine_dir"
+    npm install --omit=dev --include=optional --no-audit --fund=false
+  )
+
+  if rg_path="$(get_yce_engine_ripgrep_path "$engine_dir")"; then
+    ok "${label}: 内置 YCE ripgrep 已就绪：$rg_path"
+    return 0
+  fi
+
+  platform_spec="$(get_expected_ripgrep_package_spec "$engine_dir")"
+  (
+    cd "$engine_dir"
+    npm install "$platform_spec" --no-save --omit=dev --include=optional --no-audit --fund=false
+  )
+
+  if rg_path="$(get_yce_engine_ripgrep_path "$engine_dir")"; then
+    ok "${label}: 内置 YCE ripgrep 已就绪：$rg_path"
+    return 0
+  fi
+
+  warn "${label}: 当前平台 ripgrep 仍不可用（预期 ${platform_spec}）"
+  return 1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -80,7 +183,6 @@ while [[ $# -gt 0 ]]; do
     --yce-mode) YCE_MODE="${2:-plan}"; shift 2 ;;
     --model) MODELS="${MODELS:+$MODELS,}${2:-}"; shift 2 ;;
     --models) MODELS="${MODELS:+$MODELS,}${2:-}"; shift 2 ;;
-    --agent-config) AGENT_CONFIG="${2:-./agents/y-plan-agents.json}"; shift 2 ;;
     *) fail "未知参数: $1"; usage >&2; exit 2 ;;
   esac
 done
@@ -137,6 +239,7 @@ copy_skill_to() {
   fi
 
   chmod +x "$dest/scripts/y-plan.mjs" "$dest/scripts/install.mjs" "$dest/install.sh" 2>/dev/null || true
+  ensure_yce_engine_ripgrep "$dest" "$label"
   ok "${label} ← Y-Plan"
   info "$dest"
 }
@@ -151,7 +254,7 @@ run_setup() {
   [[ "$ENABLE_YCE" == "1" ]] && args+=(--enable-yce)
   [[ "$ENABLE_YCE" == "0" ]] && args+=(--disable-yce)
   [[ -n "$MODELS" ]] && args+=(--models "$MODELS")
-  args+=(--yce-mode "$YCE_MODE" --agent-config "$AGENT_CONFIG")
+  args+=(--yce-mode "$YCE_MODE")
   node "$root/scripts/install.mjs" "${args[@]}"
 }
 
@@ -219,10 +322,9 @@ cmd_check() {
   [[ -f "$SCRIPT_DIR/references/platform-prompts.md" ]] && ok "平台提示词存在" || fail "平台提示词缺失"
   [[ -f "$SCRIPT_DIR/vendor/yce/scripts/yce.js" ]] && ok "内置 YCE 存在" || fail "内置 YCE 缺失"
   [[ -f "$SCRIPT_DIR/vendor/mattpocock-skills/skills/engineering/codebase-design/SKILL.md" ]] && ok "内置 mattpocock/skills 存在" || fail "内置 mattpocock/skills 缺失"
-  [[ -f "$SCRIPT_DIR/agents/y-plan-agents.json" ]] && ok "Y-Plan agent 配置存在" || fail "Y-Plan agent 配置缺失"
+  ensure_yce_engine_ripgrep "$SCRIPT_DIR" "源目录"
   node --check "$SCRIPT_DIR/scripts/y-plan.mjs" >/dev/null && ok "y-plan.mjs 语法正常"
   node --check "$SCRIPT_DIR/scripts/install.mjs" >/dev/null && ok "install.mjs 语法正常"
-  node -e "JSON.parse(require('fs').readFileSync('$SCRIPT_DIR/agents/y-plan-agents.json','utf8'))" && ok "agent JSON 正常"
   if [[ -d "$dest" ]]; then
     ok "已安装目录存在: $dest"
   else

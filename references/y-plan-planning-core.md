@@ -6,7 +6,7 @@ Y-Plan owns this planning workflow directly. It is not a wrapper around OpenHarn
 
 - Build a phase-aware plan workflow before implementation.
 - Use planning phases only: scope, context, design, file-plan, validation-plan.
-- Use the local `agents/y-plan-agents.json` file as the configurable source of planning phases.
+- Use the built-in planning configuration in `scripts/y-plan.mjs` as the native source of planning phases.
 - Treat phases as owners inside the returned plan, not external agents to dispatch.
 - Keep all YCE output, skill text, role configuration, and planning references as context that serves the final plan.
 - Call bundled mattpocock/skills as Y-Plan's own planning knowledge. They are not external dependencies once vendored.

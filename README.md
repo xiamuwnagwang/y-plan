@@ -11,7 +11,7 @@ Y-Plan integrates with multiple AI coding tools (Claude Code, Gemini CLI, Codex,
 - **IDE-native installation** — installs as a skill into Cursor, Kiro, Zed, Antigravity, Qoder, Claude Code, Codex, and OpenCode
 - **Optional YCE integration** — prompt enhancement and code search to make plans reference real files
 - **Bundled planning knowledge** — ships with [mattpocock/skills](https://github.com/mattpocock/skills) for engineering discipline (TDD, domain modeling, codebase design, etc.)
-- **Phase-aware workflow** — plans use configurable phases: scope, context, design, file-plan, validation-plan
+- **Phase-aware workflow** — plans use built-in phases: scope, context, design, file-plan, validation-plan
 
 ## Quick Start
 
@@ -171,8 +171,6 @@ y-plan/
 │   └── build.sh                      # Build script (compiles binaries + packages release)
 ├── .github/workflows/
 │   └── release.yml                   # CI: auto-build + publish on tag push
-├── agents/
-│   └── y-plan-agents.json            # Planning phases & default model fallback
 ├── references/
 │   ├── y-plan-planning-core.md       # Planning workflow rules
 │   └── platform-prompts.md           # Per-IDE invocation patterns

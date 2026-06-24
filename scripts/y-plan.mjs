@@ -9,7 +9,6 @@ const __dirname = import.meta.url.startsWith("file:///$bunfs/")
   : dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, "..");
 const defaultConfigPath = resolve(skillDir, "y-plan.config.json");
-const defaultAgentConfigPath = resolve(skillDir, "agents/y-plan-agents.json");
 const bundledYceScript = resolve(skillDir, "vendor/yce/scripts/yce.js");
 const defaultYceScript = bundledYceScript;
 const bundledMattSkillsRoot = resolve(skillDir, "vendor/mattpocock-skills/skills");
@@ -17,9 +16,38 @@ const defaultSkillsRoot = bundledMattSkillsRoot;
 const planningCoreReferencePath = resolve(skillDir, "references/y-plan-planning-core.md");
 const DEFAULT_TIMEOUT_MS = 300000;
 const DEFAULT_API_TIMEOUT_MS = 180000;
-const DEFAULT_MAX_TOKENS = 4096;
 const PROMPT_TRIM_CHARS = 7000;
 const PLANNING_CORE_TRIM_CHARS = 5000;
+
+const BUILTIN_AGENT_CONFIG = {
+  routing: {
+    plannerAgent: "y-plan",
+    mode: "planning-only",
+    decisionOutput: "plan_workflow",
+  },
+  roles: {
+    scope: {
+      title: "范围澄清",
+      description: "把用户目标、边界、已知事实和待确认问题收束成计划输入。",
+    },
+    context: {
+      title: "上下文整理",
+      description: "整理 YCE、代码检索、用户上下文和相关 skill 结论，用于确定计划依据。",
+    },
+    design: {
+      title: "方案设计",
+      description: "拆出可执行的技术路线、取舍、依赖关系和风险控制。",
+    },
+    "file-plan": {
+      title: "文件改动计划",
+      description: "明确最终计划中应该改哪些文件或代码区域，以及每处改动的目标。",
+    },
+    "validation-plan": {
+      title: "验证计划",
+      description: "只规划后续如何验证，不在 Y-Plan 阶段执行命令、测试或回归。",
+    },
+  },
+};
 
 const RUNTIME_ALIASES = new Map([
   ["claude", "claude-api"],
@@ -206,7 +234,7 @@ function usage(exitCode = 0) {
     "",
     "Output: Markdown.",
     "YCE default mode: plan (enhance prompt, decide whether code search is needed, then plan with both contexts).",
-    "Models are read only from JSON config: agents/y-plan-agents.json models, then y-plan.config.json models.",
+    "Models are read only from JSON config: y-plan.config.json models.",
   ].join("\n");
   (exitCode === 0 ? console.log : console.error)(out);
   process.exit(exitCode);
@@ -216,7 +244,7 @@ function parseArgs(argv) {
   const args = {
     cwd: process.cwd(),
     config: process.env.Y_PLAN_CONFIG || defaultConfigPath,
-    agentConfig: process.env.Y_PLAN_AGENT_CONFIG || defaultAgentConfigPath,
+    agentConfig: process.env.Y_PLAN_AGENT_CONFIG || "",
     useYce: envFlag(process.env.Y_PLAN_USE_YCE),
     yceExplicit: process.env.Y_PLAN_USE_YCE != null,
     yceMode: process.env.Y_PLAN_YCE_MODE || "",
@@ -331,7 +359,7 @@ function resolveModelChoices(args, config, agentConfig = {}) {
     return jsonChoices.map(normalizeModelEntry);
   }
 
-  throw new Error("No models configured. Add a models array to y-plan.config.json or agents/y-plan-agents.json.");
+  throw new Error("No models configured. Add a models array to y-plan.config.json.");
 }
 
 function readFirstExisting(root, relativePaths) {
@@ -372,39 +400,15 @@ function readPlanningCoreReference() {
 }
 
 function loadAgentConfig(args, config) {
-  const configuredPath = args.agentConfig || config.agentConfig || defaultAgentConfigPath;
-  const path = resolveMaybeRelativeToSkillDir(configuredPath);
-  const loaded = readJsonFileIfExists(path);
-  const agentConfig = loaded || {
-    routing: {
-      plannerAgent: "y-plan",
-      mode: "planning-only",
-      decisionOutput: "plan_workflow",
-    },
-    roles: {
-      scope: {
-        title: "范围澄清",
-        description: "把用户目标、边界、已知事实和待确认问题收束成计划输入。",
-      },
-      context: {
-        title: "上下文整理",
-        description: "整理 YCE、代码检索、用户上下文和相关 skill 结论，用于确定计划依据。",
-      },
-      design: {
-        title: "方案设计",
-        description: "拆出可执行的技术路线、取舍、依赖关系和风险控制。",
-      },
-      "file-plan": {
-        title: "文件改动计划",
-        description: "明确最终计划中应该改哪些文件或代码区域，以及每处改动的目标。",
-      },
-      "validation-plan": {
-        title: "验证计划",
-        description: "只规划后续如何验证，不在 Y-Plan 阶段执行命令、测试或回归。",
-      },
-    },
-  };
-  return { path, config: agentConfig, exists: Boolean(loaded) };
+  const externalPath = args.agentConfig || config.agentConfig || "";
+  if (externalPath) {
+    const path = resolveMaybeRelativeToSkillDir(externalPath);
+    const loaded = readJsonFileIfExists(path);
+    if (loaded) {
+      return { path, config: loaded, exists: true };
+    }
+  }
+  return { path: "(built-in)", config: BUILTIN_AGENT_CONFIG, exists: false };
 }
 
 function normalizeAgentRoles(agentConfig) {
@@ -861,9 +865,7 @@ function buildApiRequest(modelChoice, prompt) {
       },
       body: {
         model,
-        max_tokens: Number(modelChoice.maxTokens || DEFAULT_MAX_TOKENS),
         messages: [{ role: "user", content: prompt }],
-        ...(modelChoice.temperature == null ? {} : { temperature: Number(modelChoice.temperature) }),
       },
     };
   }
@@ -881,8 +883,6 @@ function buildApiRequest(modelChoice, prompt) {
       body: {
         model,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: Number(modelChoice.maxTokens || DEFAULT_MAX_TOKENS),
-        ...(modelChoice.temperature == null ? {} : { temperature: Number(modelChoice.temperature) }),
       },
     };
   }
@@ -900,8 +900,6 @@ function buildApiRequest(modelChoice, prompt) {
       body: {
         model,
         input: [{ role: "user", content: prompt }],
-        max_output_tokens: Number(modelChoice.maxTokens || DEFAULT_MAX_TOKENS),
-        ...(modelChoice.temperature == null ? {} : { temperature: Number(modelChoice.temperature) }),
       },
     };
   }
@@ -922,10 +920,7 @@ function resolveApiConfigValue(modelChoice, key, envNames, fallback = "") {
 function buildProviderUrl(modelChoice, envNames, suffix) {
   const rawUrl = resolveUrlConfigValue(modelChoice, envNames);
   const normalized = normalizeBaseUrl(rawUrl);
-  if (hasProviderSuffix(normalized)) {
-    return normalized;
-  }
-  return `${stripVersionSuffix(normalized)}${suffix}`;
+  return `${stripEndpointSuffix(normalized)}${suffix}`;
 }
 
 function resolveUrlConfigValue(modelChoice, envNames) {
@@ -946,17 +941,17 @@ function requireModelName(modelChoice) {
 }
 
 function normalizeBaseUrl(value) {
-  const trimmed = String(value || "").trim().replace(/\/+$/, "");
+  let trimmed = String(value || "").trim().replace(/\/+$/, "");
   if (!trimmed) return "";
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  if (!/^https?:\/\//i.test(trimmed)) {
+    trimmed = trimmed.replace(/^\/+/, "");
+    trimmed = `https://${trimmed}`;
+  }
+  return trimmed;
 }
 
-function stripVersionSuffix(baseUrl) {
-  return baseUrl.replace(/\/v1\/?$/i, "");
-}
-
-function hasProviderSuffix(url) {
-  return /\/v1\/(?:messages|responses|chat\/completions)$/i.test(url);
+function stripEndpointSuffix(baseUrl) {
+  return baseUrl.replace(/\/v\d+\/?(?:messages|responses|chat\/completions)?\/?$/i, "").replace(/\/(v\d+)\/?$/i, "/$1").replace(/\/+$/, "");
 }
 
 function extractApiText(runtime, responseText) {
