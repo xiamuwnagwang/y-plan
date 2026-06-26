@@ -455,7 +455,59 @@ function buildIntegratedMattSummary(selected) {
   return selected.map((skill) => `${skill.name}: ${skill.reason}`).join("; ");
 }
 
-function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS } = {}) {
+const PROGRESS_NOISE_PATTERNS = [
+  /^\s*Reading additional input from stdin/i,
+  /^\s*OpenAI Codex v\d/i,
+  /^\s*-+\s*$/,
+  /^\s*workdir:/i,
+  /^\s*model:/i,
+  /^\s*provider:/i,
+  /^\s*approval:/i,
+  /^\s*sandbox:/i,
+  /^\s*reasoning effort:/i,
+  /^\s*reasoning summaries:/i,
+  /^\s*session id:/i,
+  /^\s*user\s*$/i,
+  /^\s*tokens used/i,
+  /^\s*\d[\d,]*\s*$/,
+  /Skill descriptions were shortened/i,
+  /rmcp::transport/i,
+  /AuthRequired/i,
+];
+
+function writeProgress(message) {
+  process.stderr.write(`${message}\n`);
+}
+
+function writeModelOutput(modelChoice, event) {
+  if (!event || !event.text) return;
+  if (event.stream === "stdout") {
+    process.stderr.write(event.text);
+    return;
+  }
+  if (event.stream === "progress") {
+    process.stderr.write(event.text);
+    return;
+  }
+  if (event.stream === "stderr") {
+    const lines = String(event.text).split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (PROGRESS_NOISE_PATTERNS.some((pattern) => pattern.test(trimmed))) continue;
+      if (/error|failed|timeout|timed out|fatal|denied|unauthorized/i.test(trimmed)) {
+        process.stderr.write(`[${modelChoice.runtime}] ${trimmed}\n`);
+      }
+    }
+  }
+}
+
+function writeYceProgress(event) {
+  if (!event || !event.message) return;
+  process.stderr.write(`${event.message}\n`);
+}
+
+function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS, onStdout, onStderr } = {}) {
   return new Promise((resolvePromise) => {
     const child = spawn(command.bin, command.args, {
       cwd,
@@ -471,8 +523,20 @@ function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS } = {}) {
       child.kill("SIGTERM");
       resolvePromise({ code: 124, stdout, stderr: `${stderr}\nTimeout after ${timeoutMs}ms` });
     }, timeoutMs);
-    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      stdout += text;
+      if (onStdout) {
+        try { onStdout(text); } catch {}
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      if (onStderr) {
+        try { onStderr(text); } catch {}
+      }
+    });
     child.on("error", (error) => {
       if (settled) return;
       settled = true;
@@ -488,12 +552,16 @@ function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS } = {}) {
   });
 }
 
-async function runYcePrepass({ args, config, task }) {
+async function runYcePrepass({ args, config, task, onProgress }) {
   const yceConfig = config.yce && typeof config.yce === "object" ? config.yce : {};
   const enabled = args.yceExplicit ? Boolean(args.useYce) : Boolean(yceConfig.enabled);
   if (!enabled) {
     return { enabled: false, prompt: task, stdout: "", stderr: "", code: 0 };
   }
+
+  const report = (message) => {
+    if (onProgress) onProgress({ message });
+  };
 
   const yceScript = defaultYceScript;
   if (!existsSync(yceScript)) {
@@ -512,6 +580,7 @@ async function runYcePrepass({ args, config, task }) {
   const runs = [];
 
   const runYce = async (query, yceMode) => {
+    report(`[y-plan] yce ${yceMode} running ...`);
     const yceArgs = [
       yceScript,
       query,
@@ -546,6 +615,7 @@ async function runYcePrepass({ args, config, task }) {
     const enhanceRun = await runYce(task, "enhance");
     const enhancedTask = enhanceRun.enhancedPrompt || task;
     const shouldSearch = shouldRunYceSearch({ originalText: task, expandedText: enhancedTask, yceConfig });
+    report(shouldSearch ? "[y-plan] yce enhance done; code search needed." : "[y-plan] yce enhance done; no code search needed.");
     let searchRun = null;
     if (shouldSearch) {
       searchRun = await runYce(enhancedTask, "search");
@@ -660,10 +730,45 @@ function trimForPrompt(content, maxChars = PROMPT_TRIM_CHARS) {
   return `${content.slice(0, maxChars)}\n\n[truncated by y-plan: ${content.length - maxChars} chars omitted]`;
 }
 
+const SKILL_SUMMARY_MAX_CHARS = 600;
+
+function summarizeSkill(content) {
+  const text = String(content || "").trim();
+  if (!text) return "(empty)";
+  const withoutFrontmatter = text.replace(/^---[\s\S]*?---\s*/, "");
+  const lines = withoutFrontmatter.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const summaryLines = [];
+  let total = 0;
+  for (const line of lines) {
+    if (/^#{1,6}\s+/i.test(line)) {
+      if (summaryLines.length > 0) break;
+      continue;
+    }
+    if (total + line.length > SKILL_SUMMARY_MAX_CHARS) {
+      const remaining = SKILL_SUMMARY_MAX_CHARS - total;
+      if (remaining > 0) summaryLines.push(`${line.slice(0, remaining)}...`);
+      break;
+    }
+    summaryLines.push(line);
+    total += line.length + 1;
+    if (summaryLines.length >= 3) break;
+  }
+  const summary = summaryLines.join(" ").trim();
+  return summary || "(no summary available)";
+}
+
 function buildPrompt({ task, originalTask, cwd, modelChoice, selected, missing, root, ycePrepass, agentConfigInfo }) {
   const planningCoreReference = readPlanningCoreReference();
   const agentPlanningGuidance = buildAgentPlanningGuidance(agentConfigInfo, task);
   const skillBlocks = selected.map((skill) => {
+    if (skill.always) {
+      return [
+        `### ${skill.name} (summary only — load full skill at execution time)`,
+        `path: ${skill.path}`,
+        `reason: ${skill.reason}`,
+        `summary: ${summarizeSkill(skill.content)}`,
+      ].join("\n");
+    }
     return [
       `### ${skill.name}`,
       `path: ${skill.path}`,
@@ -686,6 +791,7 @@ Hard boundaries:
 - Do not return YCE output, skill excerpts, or planning references as standalone deliverables; distill them into the final Markdown plan.
 - Use selected_skills only to explain which planning inputs shaped the final plan and why.
 - Use the bundled mattpocock/skills as directly callable planning knowledge inside Y-Plan; select the relevant ones and apply them to the final plan.
+- Always-on skills (implement, codebase-design, domain-modeling) are injected as summaries only to keep the prompt compact. At execution time, the caller should read the full skill from its listed path before applying it. If a plan step depends on a specific always-on skill's discipline, cite the skill name and path in that step so the caller knows what to load.
 - If YCE enhancement/search context is present, use it to make the plan concrete about which code files or areas should change.
 - Every implementation/refactor/debugging plan must say which file or code area should be changed, what to change there, and how to validate it. If YCE did not locate enough code, state the exact missing lookup instead of guessing.
 - Use Y-Plan native planning roles as workflow owners inside the plan, not as external agents to invoke.
@@ -812,41 +918,84 @@ function buildCommand(modelChoice, prompt) {
   throw new Error(`Unsupported runtime: ${runtime}`);
 }
 
-async function runModel(modelChoice, prompt, cwd) {
+async function runModel(modelChoice, prompt, cwd, { onOutput } = {}) {
   if (isApiRuntime(modelChoice.runtime)) {
-    return runApiModel(modelChoice, prompt);
+    return runApiModel(modelChoice, prompt, { onOutput });
   }
   const command = buildCommand(modelChoice, prompt);
-  return runProcess(command, cwd);
+  return runProcess(command, cwd, {
+    onStdout: (text) => {
+      if (onOutput) onOutput({ stream: "stdout", text });
+    },
+    onStderr: (text) => {
+      if (onOutput) onOutput({ stream: "stderr", text });
+    },
+  });
 }
 
 function isApiRuntime(runtime) {
   return runtime === "claude-api" || runtime === "openai-chat" || runtime === "openai-responses";
 }
 
-async function runApiModel(modelChoice, prompt) {
+async function runApiModel(modelChoice, prompt, { onOutput } = {}) {
+  const runtime = modelChoice.runtime;
   try {
     const { url, headers, body } = buildApiRequest(modelChoice, prompt);
+    if (onOutput) onOutput({ stream: "progress", text: `[${runtime}/${modelChoice.model || ""}] requesting ${url}\n` });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Number(modelChoice.timeoutMs || DEFAULT_API_TIMEOUT_MS));
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    const responseText = await response.text();
+    let response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) {
-      return { code: 1, stdout: "", stderr: `${modelChoice.runtime} API failed: ${response.status} ${response.statusText} - ${responseText}` };
+      const errorText = await safeReadText(response);
+      return { code: 1, stdout: "", stderr: `${runtime} API failed: ${response.status} ${response.statusText} - ${errorText}` };
     }
-    const output = extractApiText(modelChoice.runtime, responseText);
+
+    const contentType = response.headers.get("content-type") || "";
+    const isEventStream = /text\/event-stream/i.test(contentType) || Boolean(response.body && response.body.getReader && contentType === "");
+
+    if (isEventStream && response.body && response.body.getReader) {
+      const { output, error } = await readSseStream(response, runtime, (delta) => {
+        if (onOutput) onOutput({ stream: "stdout", text: delta });
+      });
+      if (error) {
+        return { code: 1, stdout: output, stderr: `${runtime} API stream error: ${error}` };
+      }
+      if (!output.trim()) {
+        return { code: 1, stdout: "", stderr: `${runtime} API stream returned empty text` };
+      }
+      return { code: 0, stdout: output, stderr: "" };
+    }
+
+    const responseText = await response.text();
+    const output = extractApiText(runtime, responseText);
     if (!output.trim()) {
-      return { code: 1, stdout: "", stderr: `${modelChoice.runtime} API returned empty text: ${responseText}` };
+      return { code: 1, stdout: "", stderr: `${runtime} API returned empty text: ${responseText}` };
     }
+    if (onOutput) onOutput({ stream: "stdout", text: output });
     return { code: 0, stdout: output, stderr: "" };
   } catch (error) {
-    return { code: 1, stdout: "", stderr: `${modelChoice.runtime} API request failed: ${error.message}` };
+    if (error.name === "AbortError") {
+      return { code: 124, stdout: "", stderr: `${runtime} API timed out after ${modelChoice.timeoutMs || DEFAULT_API_TIMEOUT_MS}ms` };
+    }
+    return { code: 1, stdout: "", stderr: `${runtime} API request failed: ${error.message}` };
+  }
+}
+
+async function safeReadText(response) {
+  try {
+    return await response.text();
+  } catch {
+    return "";
   }
 }
 
@@ -866,6 +1015,7 @@ function buildApiRequest(modelChoice, prompt) {
       body: {
         model,
         messages: [{ role: "user", content: prompt }],
+        stream: true,
       },
     };
   }
@@ -883,6 +1033,7 @@ function buildApiRequest(modelChoice, prompt) {
       body: {
         model,
         messages: [{ role: "user", content: prompt }],
+        stream: true,
       },
     };
   }
@@ -900,6 +1051,7 @@ function buildApiRequest(modelChoice, prompt) {
       body: {
         model,
         input: [{ role: "user", content: prompt }],
+        stream: true,
       },
     };
   }
@@ -978,6 +1130,90 @@ function extractApiText(runtime, responseText) {
     }).join("");
   }
   return "";
+}
+
+function extractStreamDelta(runtime, event) {
+  if (!event || typeof event !== "object") return "";
+  const type = event.type || "";
+  if (runtime === "claude-api") {
+    if (type === "content_block_delta" && event.delta) {
+      if (event.delta.type === "text_delta" && typeof event.delta.text === "string") return event.delta.text;
+      if (typeof event.delta.text === "string") return event.delta.text;
+    }
+    return "";
+  }
+  if (runtime === "openai-chat") {
+    const delta = event.choices?.[0]?.delta;
+    if (delta && typeof delta.content === "string") return delta.content;
+    return "";
+  }
+  if (runtime === "openai-responses") {
+    if (type === "response.output_text.delta" && typeof event.delta === "string") return event.delta;
+    return "";
+  }
+  return "";
+}
+
+function isStreamErrorEvent(runtime, event) {
+  if (!event || typeof event !== "object") return null;
+  if (event.error) {
+    const err = event.error;
+    return `${err.code || err.type || "error"}: ${err.message || JSON.stringify(err)}`;
+  }
+  const type = event.type || "";
+  if (runtime === "openai-responses" && type === "response.failed" && event.response?.error) {
+    const err = event.response.error;
+    return `${err.code || "error"}: ${err.message || JSON.stringify(err)}`;
+  }
+  if (runtime === "openai-chat" && event.choices?.[0]?.finish_reason === "error") {
+    return `chat completion finished with error`;
+  }
+  return null;
+}
+
+async function readSseStream(response, runtime, onDelta) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let output = "";
+  let lastEventId = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nlIndex;
+    while ((nlIndex = buffer.indexOf("\n")) !== -1) {
+      const rawLine = buffer.slice(0, nlIndex);
+      buffer = buffer.slice(nlIndex + 1);
+      const line = rawLine.replace(/\r$/, "");
+      if (!line) continue;
+      if (line.startsWith(":")) continue;
+      if (line.startsWith("event:")) {
+        lastEventId = line.slice(6).trim();
+        continue;
+      }
+      if (line.startsWith("id:")) continue;
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data) continue;
+      if (data === "[DONE]") continue;
+      try {
+        const event = JSON.parse(data);
+        const errMsg = isStreamErrorEvent(runtime, event);
+        if (errMsg) {
+          return { output, error: errMsg };
+        }
+        const delta = extractStreamDelta(runtime, event);
+        if (delta) {
+          output += delta;
+          if (onDelta) onDelta(delta);
+        }
+      } catch {
+        // ignore non-JSON keep-alive or partial frames
+      }
+    }
+  }
+  return { output, error: null };
 }
 
 function extractYPlanBlock(stdout) {
@@ -1144,7 +1380,7 @@ async function main() {
   const originalTask = await readStdinIfNeeded(args.task);
   if (!originalTask) usage(1);
 
-  const ycePrepass = await runYcePrepass({ args, config, task: originalTask });
+  const ycePrepass = await runYcePrepass({ args, config, task: originalTask, onProgress: writeYceProgress });
   const task = ycePrepass.prompt || originalTask;
   const agentConfigInfo = loadAgentConfig(args, config);
   const modelChoices = resolveModelChoices(args, config, agentConfigInfo.config);
@@ -1156,10 +1392,14 @@ async function main() {
   for (const modelChoice of modelChoices) {
     finalChoice = modelChoice;
     const prompt = buildPrompt({ task, originalTask, cwd: args.cwd, modelChoice, selected, missing, root, ycePrepass, agentConfigInfo });
-    const result = await runModel(modelChoice, prompt, args.cwd);
+    writeProgress(`[y-plan] planning with ${modelChoice.runtime}/${modelChoice.model || "(default)"} ...`);
+    const result = await runModel(modelChoice, prompt, args.cwd, {
+      onOutput: (event) => writeModelOutput(modelChoice, event),
+    });
     attempts.push({ ...modelChoice, code: result.code });
     finalResult = result;
     if (result.code === 0 && result.stdout.trim()) break;
+    writeProgress(`[y-plan] ${modelChoice.runtime}/${modelChoice.model || ""} returned no usable output (exit ${result.code}); trying next model.`);
   }
 
   emitResult({
