@@ -1,0 +1,13 @@
+{
+  "models": [
+    { "runtime": "claude-code" },
+    { "runtime": "cursor", "model": "auto" },
+    { "runtime": "codex" }
+  ],
+  "yce": {
+    "enabled": false,
+    "mode": "plan",
+    "script": "./vendor/yce/scripts/yce.js",
+    "timeoutMs": 300000
+  }
+}
