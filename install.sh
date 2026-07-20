@@ -21,8 +21,8 @@ YCE_RELAY_URL=""
 YCE_RELAY_TOKEN=""
 YOUWEN_TOKEN=""
 
-TARGET_KEYS=("agents" "codex" "claude" "opencode" "cursor" "kiro" "zed" "antigravity" "qoder" "path")
-TARGET_LABELS=(".agents" "Codex" "Claude Code" "OpenCode" "Cursor" "Kiro" "Zed Prompts" "Antigravity" "Qoder" "Custom Path")
+TARGET_KEYS=("agents" "codex" "claude" "opencode" "cursor" "kiro" "zed" "antigravity" "qoder" "qwen" "grok" "kimi" "path")
+TARGET_LABELS=(".agents" "Codex" "Claude Code" "OpenCode" "Cursor" "Kiro" "Zed Prompts" "Antigravity" "Qoder" "Qwen" "Grok" "Kimi" "Custom Path")
 TARGET_DIRS=(
   "$HOME/.agents/skills"
   "${CODEX_HOME:-$HOME/.codex}/skills"
@@ -33,10 +33,13 @@ TARGET_DIRS=(
   "$HOME/.config/zed/prompts"
   "$HOME/.antigravity/skills"
   "$HOME/.qoder/skills"
+  "$HOME/.qwen/skills"
+  "$HOME/.grok/skills"
+  "$HOME/.kimi/skills"
   ""
 )
 
-IDE_TARGET_KEYS=("cursor" "kiro" "zed" "antigravity" "qoder")
+IDE_TARGET_KEYS=("cursor" "kiro" "zed" "antigravity" "qoder" "qwen" "grok" "kimi")
 
 usage() {
   cat <<'USAGE'

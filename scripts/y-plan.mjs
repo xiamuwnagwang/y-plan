@@ -33,6 +33,11 @@ const AUTO_DISCOVER_CLI = [
   { runtime: "cursor", bins: ["cursor-agent", "agent", "cursor"] },
   { runtime: "kiro", bins: ["kiro-cli", "kiro"] },
   { runtime: "qoder", bins: ["qodercli", "qoder", "qoder-cli"] },
+  { runtime: "antigravity", bins: ["agy", "antigravity", "antigravity-cli"] },
+  { runtime: "qwen", bins: ["qwen", "qwen-code"] },
+  { runtime: "opencode", bins: ["opencode", "open-code"] },
+  { runtime: "grok", bins: ["grok", "grok-cli"] },
+  { runtime: "kimi", bins: ["kimi", "kimi-cli", "kimi-code"] },
 ];
 
 const BUILTIN_AGENT_CONFIG = {
@@ -86,6 +91,18 @@ const RUNTIME_ALIASES = new Map([
   ["cursor-cli", "cursor"],
   ["kiro", "kiro"],
   ["kiro-cli", "kiro"],
+  ["antigravity", "antigravity"],
+  ["antigravity-cli", "antigravity"],
+  ["agy", "antigravity"],
+  ["qwen", "qwen"],
+  ["qwen-code", "qwen"],
+  ["opencode", "opencode"],
+  ["open-code", "opencode"],
+  ["grok", "grok"],
+  ["grok-cli", "grok"],
+  ["kimi", "kimi"],
+  ["kimi-cli", "kimi"],
+  ["kimi-code", "kimi"],
 ]);
 
 const CODE_SEARCH_INTENT_PATTERNS = [
@@ -575,8 +592,12 @@ function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS, onStdout
     const child = spawn(command.bin, command.args, {
       cwd,
       env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [command.stdin != null ? "pipe" : "ignore", "pipe", "pipe"],
     });
+    if (command.stdin != null && child.stdin) {
+      child.stdin.write(command.stdin);
+      child.stdin.end();
+    }
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -956,6 +977,21 @@ function resolveRuntimeBin(runtime) {
   if (runtime === "kiro") {
     return process.env.Y_PLAN_KIRO_BIN || firstExistingBin(["kiro-cli", "kiro"]) || "kiro-cli";
   }
+  if (runtime === "antigravity") {
+    return process.env.Y_PLAN_ANTIGRAVITY_BIN || firstExistingBin(["agy", "antigravity", "antigravity-cli"]) || "agy";
+  }
+  if (runtime === "qwen") {
+    return process.env.Y_PLAN_QWEN_BIN || firstExistingBin(["qwen", "qwen-code"]) || "qwen";
+  }
+  if (runtime === "opencode") {
+    return process.env.Y_PLAN_OPENCODE_BIN || firstExistingBin(["opencode", "open-code"]) || "opencode";
+  }
+  if (runtime === "grok") {
+    return process.env.Y_PLAN_GROK_BIN || firstExistingBin(["grok", "grok-cli"]) || "grok";
+  }
+  if (runtime === "kimi") {
+    return process.env.Y_PLAN_KIMI_BIN || firstExistingBin(["kimi", "kimi-cli", "kimi-code"]) || "kimi";
+  }
   return runtime;
 }
 
@@ -1006,6 +1042,35 @@ function buildCommand(modelChoice, prompt) {
     if (model) args.push("--model", model);
     args.push(prompt);
     return { bin: resolveRuntimeBin(runtime), args };
+  }
+  if (runtime === "antigravity") {
+    const args = ["-p"];
+    if (model) args.push("--model", model);
+    args.push("--mode", "plan");
+    args.push(prompt);
+    return { bin: resolveRuntimeBin(runtime), args };
+  }
+  if (runtime === "qwen") {
+    const args = ["-p"];
+    if (model) args.push("-m", model);
+    args.push(prompt);
+    return { bin: resolveRuntimeBin(runtime), args };
+  }
+  if (runtime === "opencode") {
+    const args = ["--prompt"];
+    if (model) args.push("-m", model);
+    args.push(prompt);
+    return { bin: resolveRuntimeBin(runtime), args };
+  }
+  if (runtime === "grok") {
+    const args = ["-p", prompt, "--permission-mode", "plan"];
+    if (model) args.push("-m", model);
+    return { bin: resolveRuntimeBin(runtime), args };
+  }
+  if (runtime === "kimi") {
+    const args = ["--print"];
+    if (model) args.push("-m", model);
+    return { bin: resolveRuntimeBin(runtime), args, stdin: prompt };
   }
   throw new Error(`Unsupported runtime: ${runtime}`);
 }

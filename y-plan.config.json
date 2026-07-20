@@ -1,0 +1,49 @@
+{
+  "models": [
+    {
+      "runtime": "antigravity",
+      "model": "Claude Opus 4.6 (Thinking)"
+    },
+    {
+      "runtime": "antigravity",
+      "model": "Gemini 3.1 Pro (High)"
+    },
+    {
+      "runtime": "claude-code"
+    },
+    {
+      "runtime": "codex"
+    },
+    {
+      "runtime": "qoder",
+      "model": "Cantus"
+    },
+    {
+      "runtime": "opencode",
+      "model": "opencode-go/kimi-k3"
+    },
+    {
+      "runtime": "qwen",
+      "model": "glm-5.2"
+    },
+    {
+      "runtime": "cursor"
+    },
+    {
+      "runtime": "kiro"
+    },
+    {
+      "runtime": "grok"
+    },
+    {
+      "runtime": "kimi"
+    }
+  ],
+  "yce": {
+    "enabled": true,
+    "mode": "plan",
+    "script": "./vendor/yce/scripts/yce.js",
+    "timeoutMs": 300000,
+    "relayUrl": "https://yce.aigy.de"
+  }
+}

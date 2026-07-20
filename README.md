@@ -1,281 +1,213 @@
-# Y-Plan
+<p>
+  <a href="https://www.aihero.dev/s/skills-newsletter">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://res.cloudinary.com/total-typescript/image/upload/v1777382277/skills-repo-dark_2x.png">
+      <source media="(prefers-color-scheme: light)" srcset="https://res.cloudinary.com/total-typescript/image/upload/v1777382277/skill-repo-light_2x.png">
+      <img alt="Skills" src="https://res.cloudinary.com/total-typescript/image/upload/v1777382277/skill-repo-light_2x.png" width="369">
+    </picture>
+  </a>
+</p>
 
-A planning-only skill that turns task briefs into structured Markdown plans — without implementing, editing files, or running anything.
+# Skills For Real Engineers
 
-Y-Plan integrates with multiple AI coding tools (Claude Code, Gemini CLI, Codex, Cursor, Kiro, Qoder) and API providers (Anthropic, OpenAI) to generate implementation, refactor, architecture, and debugging plans.
+[![skills.sh](https://skills.sh/b/mattpocock/skills)](https://skills.sh/mattpocock/skills)
 
-## Features
+My agent skills that I use every day to do real engineering - not vibe coding.
 
-- **Planning only** — produces plans, never executes code changes
-- **Multi-runtime fallback** — tries configured models in order until one succeeds
-- **IDE-native installation** — installs as a skill into Cursor, Kiro, Zed, Antigravity, Qoder, Claude Code, Codex, and OpenCode
-- **Optional YCE integration** — prompt enhancement and code search to make plans reference real files
-- **Bundled planning knowledge** — ships with [mattpocock/skills](https://github.com/mattpocock/skills) for engineering discipline (TDD, domain modeling, codebase design, etc.)
-- **Phase-aware workflow** — plans use built-in phases: scope, context, design, file-plan, validation-plan
+Developing real applications is hard. Approaches like GSD, BMAD, and Spec-Kit try to help by owning the process. But while doing so, they take away your control and make bugs in the process hard to resolve.
 
-## Quick Start
+These skills are designed to be small, easy to adapt, and composable. They work with any model. They're based on decades of engineering experience. Hack around with them. Make them your own. Enjoy.
 
-安装完成后即可使用：
+If you want to keep up with changes to these skills, and any new ones I create, you can join ~60,000 other devs on my newsletter:
 
-1. **IDE skill**：复制 `SKILL.md` 到对应 skills 目录后，直接说 `Use Y-Plan to plan this refactor`
-2. **CLI**：`install` 会自动检测本机 CLI 并写入 `y-plan.config.json`，无需再跑交互配置
+[Sign Up To The Newsletter](https://www.aihero.dev/s/skills-newsletter)
 
-### Download Pre-built Binary
+## Quickstart (30-second setup)
 
-Grab the latest release for your platform from [GitHub Releases](https://github.com/xiamuwnagwang/y-plan/releases):
-
-| Platform | File |
-|---|---|
-| Linux x64 | `y-plan-vX.X.X-linux-x64.tar.gz` |
-| Linux arm64 | `y-plan-vX.X.X-linux-arm64.tar.gz` |
-| macOS Apple Silicon | `y-plan-vX.X.X-darwin-arm64.tar.gz` |
-| macOS Intel | `y-plan-vX.X.X-darwin-x64.tar.gz` |
-| Windows x64 | `y-plan-vX.X.X-windows-x64.zip` |
+1. Run the skills.sh installer:
 
 ```bash
-# Example: download, extract, and run
-tar -xzf y-plan-v1.0.0-linux-x64.tar.gz
-cd y-plan
-./bin/y-plan "Plan this refactor..."
-
-# Or install as a skill
-bash install.sh --install --target cursor
+npx skills@latest add mattpocock/skills
 ```
 
-Pre-built binaries are standalone — no Node.js required.
+2. Pick the skills you want, and which coding agents you want to install them on. **Make sure you select `/setup-matt-pocock-skills`**.
 
-### From Source
+3. Run `/setup-matt-pocock-skills` in your agent. It will:
+   - Ask you which issue tracker you want to use (GitHub, Linear, or local files)
+   - Ask you what labels you apply to tickets when you triage them (`/triage` uses labels)
+   - Ask you where you want to save any docs we create
+
+4. Bam - you're ready to go.
+
+## Install as a Claude Code plugin
+
+Prefer a plug-and-play install you don't maintain by hand? These skills also ship as a native [Claude Code plugin](https://code.claude.com/docs/en/plugins). Instead of copying editable files into your repo, the plugin installs the whole skill set as a managed bundle that updates when I ship a new version — you subscribe rather than fork.
+
+Inside Claude Code:
+
+```
+/plugin marketplace add mattpocock/skills
+/plugin install mattpocock-skills@mattpocock
+```
+
+Or from your shell:
 
 ```bash
-# Install to default location (~/.agents/skills/y-plan)
-# 自动 bootstrap：检测本机 Claude/Gemini/Codex/Cursor/Kiro/Qoder 并写默认配置
-bash install.sh --install
-
-# Install to a specific IDE
-bash install.sh --install --target cursor
-bash install.sh --install --target kiro
-bash install.sh --install --target zed
-
-# Install everywhere
-bash install.sh --install --all-targets
-
-# Optional: interactive setup (models, YCE, API providers)
-bash install.sh --setup
-
-# Version / upgrade
-bash install.sh --version
-bash install.sh --check
-bash install.sh --upgrade
-bash install.sh --sync
+claude plugin marketplace add mattpocock/skills
+claude plugin install mattpocock-skills@mattpocock
 ```
 
-On Windows (PowerShell):
+Then run `/setup-matt-pocock-skills` once per repo, exactly as in the quickstart above.
 
-```powershell
-.\install.ps1 -Action install -Target agents
-.\install.ps1 -Action version
-.\install.ps1 -Action check
-.\install.ps1 -Action upgrade
-```
+Two ways to install, two philosophies:
 
-If an **old** `install.ps1` fails to parse on PowerShell 5.1 with:
+- **[skills.sh](https://skills.sh/mattpocock/skills)** copies the skills into your project so you can hack on them and make them your own.
+- **The plugin** keeps them as a read-only, always-current bundle you don't edit — best when you just want my set to work and follow along as it evolves.
 
-```text
-The term 'if' is not recognized ... (if ($env:CODEX_HOME) ...
-```
+> Using Codex or another agent? The [skills.sh installer](https://skills.sh/mattpocock/skills) already installs these skills into Codex and other Agent-Skills-standard harnesses today. A native Codex plugin is on the roadmap — see [`.agents/adr/0002-ship-as-a-claude-code-plugin.md`](./.agents/adr/0002-ship-as-a-claude-code-plugin.md).
 
-use the standalone repair script (does not depend on the broken file):
+## Why These Skills Exist
 
-```powershell
-# one-liner from any directory
-irm https://raw.githubusercontent.com/xiamuwnagwang/y-plan/main/fix-windows.ps1 | iex
+I built these skills as a way to fix common failure modes I see with Claude Code, Codex, and other coding agents.
 
-# or after download
-.\fix-windows.ps1 -Target cursor
-```
+### #1: The Agent Didn't Do What I Want
 
-## Usage
+> "No-one knows exactly what they want"
+>
+> David Thomas & Andrew Hunt, [The Pragmatic Programmer](https://www.amazon.co.uk/Pragmatic-Programmer-Anniversary-Journey-Mastery/dp/B0833F1T3V)
 
-### In IDE
+**The Problem**. The most common failure mode in software development is misalignment. You think the dev knows what you want. Then you see what they've built - and you realize it didn't understand you at all.
 
-Once installed as a skill, ask your IDE agent:
+This is just the same in the AI age. There is a communication gap between you and the agent. The fix for this is a **grilling session** - getting the agent to ask you detailed questions about what you're building.
 
-> "Use Y-Plan to plan this refactor"
-> "Y-Plan: break this feature into vertical slices"
+**The Fix** is to use:
 
-### CLI
+- [`/grill-me`](./skills/productivity/grill-me/SKILL.md) - for non-code uses
+- [`/grill-with-docs`](./skills/engineering/grill-with-docs/SKILL.md) - same as [`/grill-me`](./skills/productivity/grill-me/SKILL.md), but adds more goodies (see below)
 
-```bash
-# With pre-built binary (no Node.js needed)
-./bin/y-plan "Plan this refactor..."
-./bin/y-plan --cwd /path/to/project "Create an implementation plan..."
-./bin/y-plan --use-yce --yce-mode plan "Plan this code change..."
+These are my most popular skills. They help you align with the agent before you get started, and think deeply about the change you're making. Use them _every_ time you want to make a change.
 
-# Or with Node.js
-node scripts/y-plan.mjs "Plan this refactor..."
-```
+### #2: The Agent Is Way Too Verbose
 
-## Configuration
+> With a ubiquitous language, conversations among developers and expressions of the code are all derived from the same domain model.
+>
+> Eric Evans, [Domain-Driven-Design](https://www.amazon.co.uk/Domain-Driven-Design-Tackling-Complexity-Software/dp/0321125215)
 
-Running `bash install.sh --setup` (or `node scripts/install.mjs`) launches an interactive configurator that:
+**The Problem**: At the start of a project, devs and the people they're building the software for (the domain experts) are usually speaking different languages.
 
-1. Detects installed CLIs (Claude Code, Gemini, Codex, Cursor, Kiro, Qoder)
-2. Discovers available models from each CLI
-3. Lets you pick models and API providers
-4. Writes `y-plan.config.json` with a fallback-ordered model list
+I felt the same tension with my agents. Agents are usually dropped into a project and asked to figure out the jargon as they go. So they use 20 words where 1 will do.
 
-### Model Entries
+**The Fix** for this is a shared language. It's a document that helps agents decode the jargon used in the project.
 
-| Format | Runtime |
-|---|---|
-| `claude-code` (推荐) / `claude-code/<model>` | Claude Code CLI (print mode) |
-| `codex` / `codex/<model>` | Codex CLI (exec mode) |
-| `cursor` / `cursor/auto` | Cursor Agent（优先 `cursor-agent`；`auto` 为官方默认） |
-| `kiro` / `kiro/<model>` | Kiro CLI (chat mode) |
-| `qoder` / `qoder/<model>` | Qoder CLI (print mode) |
-| `claude-api/<model>` | Anthropic Messages API |
-| `openai-chat/<model>` | OpenAI Chat Completions API |
-| `openai-responses/<model>` | OpenAI Responses API |
+<details>
+<summary>
+Example
+</summary>
 
-CLI 默认只写 runtime，不写 model，由 CLI 自带默认模型决定。API entries require `url`/`baseUrl` (or `urlEnv`/`baseUrlEnv`) and `token`/`apiKey` (or `tokenEnv`/`apiKeyEnv`). Y-Plan auto-appends the correct provider suffix to base URLs.
+Here's an example [`CONTEXT.md`](https://github.com/mattpocock/course-video-manager/blob/076a5a7a182db0fe1e62971dd7a68bcadf010f1c/CONTEXT.md), from my `course-video-manager` repo. Which one is easier to read?
 
-### Example Config
+- **BEFORE**: "There's a problem when a lesson inside a section of a course is made 'real' (i.e. given a spot in the file system)"
+- **AFTER**: "There's a problem with the materialization cascade"
 
-```json
-{
-  "models": [
-    { "runtime": "claude-code" },
-    { "runtime": "cursor", "model": "auto" },
-    { "runtime": "codex" }
-  ],
-  "yce": {
-    "enabled": false,
-    "mode": "plan",
-    "script": "./vendor/yce/scripts/yce.js",
-    "timeoutMs": 300000
-  }
-}
-```
+This concision pays off session after session.
 
-默认**不写 `model`**（Claude/Codex 等）：调用时不传 `--model`/`-m`，用 CLI 自带默认。Cursor 推荐显式 `auto`（其官方默认模型名）。需要钉死型号时再写，例如 `{ "runtime": "codex", "model": "gpt-5.5" }`。
+</details>
 
-## YCE (Optional)
+This is built into [`/grill-with-docs`](./skills/engineering/grill-with-docs/SKILL.md). It's a grilling session, but that helps you build a shared language with the AI, and document hard-to-explain decisions in ADR's.
 
-YCE provides two planning upgrades:
+It's hard to explain how powerful this is. It might be the single coolest technique in this repo. Try it, and see.
 
-- **Prompt enhancement** — improves the user brief before planning
-- **Code search** — locates relevant code so the plan can reference real files
+> [!TIP]
+> A shared language has many other benefits than reducing verbosity:
+>
+> - **Variables, functions and files are named consistently**, using the shared language
+> - As a result, the **codebase is easier to navigate** for the agent
+> - The agent also **spends fewer tokens on thinking**, because it has access to a more concise language
 
-Default mode is `plan`: enhance first, then search only when code locations are useful.
+### #3: The Code Doesn't Work
 
-```bash
-# Enable per-run
-node scripts/y-plan.mjs --use-yce --yce-mode plan "Plan this change..."
+> "Always take small, deliberate steps. The rate of feedback is your speed limit. Never take on a task that’s too big."
+>
+> David Thomas & Andrew Hunt, [The Pragmatic Programmer](https://www.amazon.co.uk/Pragmatic-Programmer-Anniversary-Journey-Mastery/dp/B0833F1T3V)
 
-# Or enable in config via the installer
-bash install.sh --setup
-```
+**The Problem**: Let's say that you and the agent are aligned on what to build. What happens when the agent _still_ produces crap?
 
-## Plan Output
+It's time to look at your feedback loops. Without feedback on how the code it produces actually runs, the agent will be flying blind.
 
-Every plan includes these sections:
+**The Fix**: You need the usual tranche of feedback loops: static types, browser access, and automated tests.
 
-| Section | Purpose |
-|---|---|
-| **Goal** | One-sentence desired outcome |
-| **Selected Skills** | Which planning skills shaped the plan |
-| **Plan Workflow** | Phase-aware breakdown (scope → context → design → file-plan → validation-plan) |
-| **File Changes** | Concrete files/areas to modify, with validation |
-| **Steps** | Ordered steps with dependencies and expected output |
-| **Dependency Graph** | Blocking relationships between steps |
-| **Risks** | Concrete risks and mitigations |
-| **Out of Scope** | What the plan deliberately skips |
-| **Handoff** | What to return after planning |
+For automated tests, a red-green-refactor loop is critical. This is where the agent writes a failing test first, then fixes the test. This helps give the agent a consistent level of feedback that results in far better code.
 
-## Version Management
+I've built a **[`/tdd`](./skills/engineering/tdd/SKILL.md) skill** you can slot into any project. It encourages red-green-refactor and gives the agent plenty of guidance on what makes good and bad tests.
 
-版本号**唯一来源**是 `SKILL.md` frontmatter 的 `version:` 字段（当前 `1.0.0`）。发版时先改 `SKILL.md` 与 `CHANGELOG.md`，再打 `vX.Y.Z` 标签。
+For debugging, I've also built a **[`/diagnosing-bugs`](./skills/engineering/diagnosing-bugs/SKILL.md)** skill that wraps best debugging practices into a simple loop.
 
-| 命令 | 作用 |
-|---|---|
-| `node scripts/y-plan.mjs --version` | 打印本地版本 |
-| `node scripts/y-plan.mjs --check-update` | 对比远端版本（GitHub raw SKILL.md） |
-| `bash install.sh --version` / `--check` / `--upgrade` / `--sync` | 安装器侧版本与升级 |
-| `node scripts/lib/version.mjs --check --json` | 机器可读版本检查 |
+### #4: We Built A Ball Of Mud
 
-远端检测源默认：`https://raw.githubusercontent.com/xiamuwnagwang/y-plan/main/SKILL.md`  
-可用环境变量覆盖：`Y_PLAN_VERSION_URL`、`Y_PLAN_REPO_URL`、`Y_PLAN_DISABLE_UPDATE_CHECK=1`。
+> "Invest in the design of the system _every day_."
+>
+> Kent Beck, [Extreme Programming Explained](https://www.amazon.co.uk/Extreme-Programming-Explained-Embrace-Change/dp/0321278658)
 
-## Project Structure
+> "The best modules are deep. They allow a lot of functionality to be accessed through a simple interface."
+>
+> John Ousterhout, [A Philosophy Of Software Design](https://www.amazon.co.uk/Philosophy-Software-Design-2nd/dp/173210221X)
 
-```
-y-plan/
-├── SKILL.md                          # Skill definition + version (source of truth)
-├── CHANGELOG.md                      # Release notes
-├── y-plan.example.config.json        # Example config (no secrets)
-├── scripts/
-│   ├── y-plan.mjs                    # Main CLI — generates plans
-│   ├── install.mjs                   # Interactive configurator + --bootstrap
-│   ├── lib/version.mjs               # Version read / remote check
-│   ├── sync-yce.mjs                  # Vendor YCE sync helper
-│   └── build.sh                      # Build script (reads version from SKILL.md)
-├── .github/workflows/
-│   └── release.yml                   # CI: auto-build + publish on tag push
-├── references/
-│   ├── y-plan-planning-core.md       # Planning workflow rules
-│   └── platform-prompts.md           # Per-IDE invocation patterns
-├── vendor/
-│   ├── yce/                          # Bundled YCE (prompt enhancement + code search)
-│   └── mattpocock-skills/            # Bundled planning skill references
-├── install.sh                        # Bash installer (Linux/macOS)
-├── install.ps1                       # PowerShell installer (Windows)
-└── LICENSE                           # MIT
-```
+**The Problem**: Most apps built with agents are complex and hard to change. Because agents can radically speed up coding, they also accelerate software entropy. Codebases get more complex at an unprecedented rate.
 
-## Building from Source
+**The Fix** for this is a radical new approach to AI-powered development: caring about the design of the code.
 
-Requires [Bun](https://bun.sh) for compilation:
+This is built in to every layer of these skills:
 
-```bash
-# Build binaries for current platform (version from SKILL.md)
-bash scripts/build.sh
+- [`/to-spec`](./skills/engineering/to-spec/SKILL.md) quizzes you about which modules you're touching before creating a spec
 
-# Build with explicit version tag
-bash scripts/build.sh v1.0.0
+And crucially, [`/improve-codebase-architecture`](./skills/engineering/improve-codebase-architecture/SKILL.md) helps you rescue a codebase that has become a ball of mud. I recommend running it on your codebase once every few days.
 
-# Output: bin/y-plan, bin/y-plan-install, dist/y-plan-v1.0.0-<platform>-<arch>.tar.gz
-```
+### Summary
 
-## Releasing
+Software engineering fundamentals matter more than ever. These skills are my best effort at condensing these fundamentals into repeatable practices, to help you ship the best apps of your career. Enjoy.
 
-1. Bump `version:` in `SKILL.md`
-2. Update `CHANGELOG.md`
-3. Push a version tag:
+## Reference
 
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+These split on one axis — who can invoke them. **User-invoked** skills are reachable only when you type them (e.g. `/grill-me`); their job is to orchestrate. **Model-invoked** skills can be invoked by you _or_ reached for automatically by the agent when the task fits; they hold the reusable discipline. A user-invoked skill may invoke model-invoked skills, but never another user-invoked one.
 
-CI builds binaries for Linux (x64, arm64), macOS (x64, arm64), and Windows (x64), then publishes them to [GitHub Releases](https://github.com/xiamuwnagwang/y-plan/releases).
+### Engineering
 
-## Environment Variables
+Skills I use daily for code work.
 
-| Variable | Purpose |
-|---|---|
-| `Y_PLAN_CONFIG` | Override config file path |
-| `Y_PLAN_AGENT_CONFIG` | Override agent config path |
-| `Y_PLAN_SKILLS_ROOT` | Override bundled mattpocock/skills root |
-| `Y_PLAN_USE_YCE` | Enable/disable YCE (`1`/`0`) |
-| `Y_PLAN_YCE_MODE` | YCE mode (`plan`, `auto`, `enhance`, `search`) |
-| `Y_PLAN_HISTORY` | Conversation history for YCE context |
-| `Y_PLAN_QODER_BIN` | Override Qoder executable name |
-| `Y_PLAN_CURSOR_BIN` | Override Cursor Agent executable name |
-| `Y_PLAN_KIRO_BIN` | Override Kiro CLI executable name |
-| `Y_PLAN_VERSION_URL` | Remote SKILL.md URL for update checks |
-| `Y_PLAN_REPO_URL` | GitHub repo URL for upgrade downloads |
-| `Y_PLAN_DISABLE_UPDATE_CHECK` | Set `1` to disable runtime update banners |
+**User-invoked**
 
-## License
+- **[ask-matt](./skills/engineering/ask-matt/SKILL.md)** — Ask which skill or flow fits your situation. A router over the user-invoked skills in this repo.
+- **[grill-with-docs](./skills/engineering/grill-with-docs/SKILL.md)** — Grilling session that also builds your project's domain model, sharpening terminology and updating `CONTEXT.md` and ADRs inline.
+- **[triage](./skills/engineering/triage/SKILL.md)** — Move issues through a state machine of triage roles.
+- **[improve-codebase-architecture](./skills/engineering/improve-codebase-architecture/SKILL.md)** — Scan a codebase for deepening opportunities, present them as a visual HTML report, then grill through whichever one you pick.
+- **[setup-matt-pocock-skills](./skills/engineering/setup-matt-pocock-skills/SKILL.md)** — Configure this repo for the engineering skills (issue tracker, triage labels, domain doc layout). Run once per repo before using the other engineering skills.
+- **[to-spec](./skills/engineering/to-spec/SKILL.md)** — Turn the current conversation into a spec and publish it to the issue tracker. No interview — just synthesizes what you've already discussed.
+- **[to-tickets](./skills/engineering/to-tickets/SKILL.md)** — Break any plan, spec, or conversation into a set of tracer-bullet tickets, each declaring its blocking edges — written as text in a local file, or as native blocking links on a real tracker.
+- **[implement](./skills/engineering/implement/SKILL.md)** — Build the work described by a spec or set of tickets, driving `/tdd` at pre-agreed seams and closing out with `/code-review` before committing.
+- **[wayfinder](./skills/engineering/wayfinder/SKILL.md)** — Plan a huge chunk of work, more than one agent session can hold, as a shared map of investigation tickets on the issue tracker — resolve them one at a time until the way to the destination is clear.
 
-[MIT](LICENSE)
+**Model-invoked**
+
+- **[prototype](./skills/engineering/prototype/SKILL.md)** — Build a throwaway prototype to answer a design question — a runnable terminal app for state/logic questions, or several radically different UI variations toggleable from one route.
+- **[diagnosing-bugs](./skills/engineering/diagnosing-bugs/SKILL.md)** — Disciplined diagnosis loop for hard bugs and performance regressions: reproduce → minimise → hypothesise → instrument → fix → regression-test.
+- **[research](./skills/engineering/research/SKILL.md)** — Investigate a question against high-trust primary sources and capture the findings as a cited Markdown file in the repo, run as a background agent.
+- **[tdd](./skills/engineering/tdd/SKILL.md)** — Test-driven development with a red-green-refactor loop. Builds features or fixes bugs one vertical slice at a time.
+- **[domain-modeling](./skills/engineering/domain-modeling/SKILL.md)** — Actively build and sharpen a project's domain model — challenge terms against the glossary, stress-test with edge-case scenarios, and update `CONTEXT.md` and ADRs inline.
+- **[codebase-design](./skills/engineering/codebase-design/SKILL.md)** — Shared discipline and vocabulary for designing deep modules: a lot of behaviour behind a small interface, placed at a clean seam, testable through that interface.
+- **[code-review](./skills/engineering/code-review/SKILL.md)** — Two-axis review of the diff since a fixed point: **Standards** (does it follow the repo's coding standards, plus a Fowler smell baseline?) and **Spec** (does it faithfully implement the originating issue/PRD?), run as parallel sub-agents so neither pollutes the other.
+- **[resolving-merge-conflicts](./skills/engineering/resolving-merge-conflicts/SKILL.md)** — Work through an in-progress git merge or rebase conflict hunk by hunk, resolving by intent traced to each side's primary source, then finish the operation — never `--abort`.
+
+### Productivity
+
+General workflow tools, not code-specific.
+
+**User-invoked**
+
+- **[grill-me](./skills/productivity/grill-me/SKILL.md)** — Get relentlessly interviewed about a plan or design until every branch of the decision tree is resolved.
+- **[handoff](./skills/productivity/handoff/SKILL.md)** — Compact the current conversation into a handoff document so another agent can continue the work.
+- **[teach](./skills/productivity/teach/SKILL.md)** — Teach the user a new skill or concept over multiple sessions, using the current directory as a stateful teaching workspace.
+- **[writing-great-skills](./skills/productivity/writing-great-skills/SKILL.md)** — Reference for writing and editing skills well: the vocabulary and principles that make a skill predictable.
+
+**Model-invoked**
+
+- **[grilling](./skills/productivity/grilling/SKILL.md)** — Interview the user relentlessly about a plan, decision, or idea until every branch of the decision tree is resolved. The reusable loop behind `grill-me` and `grill-with-docs`.

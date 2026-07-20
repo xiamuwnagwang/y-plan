@@ -54,8 +54,8 @@ Use PowerShell on Windows:
 What install does:
 
 - copies the whole standalone `y-plan` directory into the selected skills root or Zed prompts root;
-- supports `cursor`, `kiro`, `zed`, `antigravity`, `qoder`, `agents`, `codex`, `claude`, and `opencode` targets;
-- **auto-bootstraps** `y-plan.config.json` by detecting installed CLIs (Claude Code / Gemini / Codex / Cursor / Kiro / Qoder);
+- supports `cursor`, `kiro`, `zed`, `antigravity`, `qoder`, `qwen`, `grok`, `kimi`, `agents`, `codex`, `claude`, and `opencode` targets;
+- **auto-bootstraps** `y-plan.config.json` by detecting installed CLIs (Claude Code / Gemini / Codex / Cursor / Kiro / Qoder / Antigravity / Qwen / OpenCode / Grok / Kimi);
 - preserves existing `y-plan.config.json` and `vendor/yce/.env` on reinstall;
 - optional interactive configure: `bash install.sh --setup` (models, API providers, YCE tokens).
 
