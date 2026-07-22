@@ -1,6 +1,6 @@
 ---
 name: y-plan
-version: 1.0.6
+version: 1.1.0
 description: Planning-only skill for producing structured implementation, refactor, architecture, product, or debugging plans before execution. Use when the user asks for Y-Plan, planning only, a plan, implementation plan, refactor plan, task breakdown, roadmap, dependency map, role-aware plan workflow, configurable planning agents, or model-backed planning. This standalone skill bundles YCE and mattpocock/skills, owns OpenHarnesses-derived planning capabilities natively through local y-plan agent configuration, supports model-backed planning through Claude, Gemini, Codex, Cursor, Kiro, and Qoder CLI, and can optionally use configurable YCE prompt enhancement and code search. Install to Cursor, Kiro, Zed prompts, Antigravity, and Qoder via install.sh.
 ---
 
