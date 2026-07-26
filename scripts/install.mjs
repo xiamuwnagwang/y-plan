@@ -17,7 +17,7 @@ const yceEnvPath = resolve(yceRootDir, ".env");
 const yceEngineEnvPath = resolve(yceRootDir, "vendor/yce-engine/.env");
 const DEFAULT_YCE_RELAY_URL = "https://yce.aigy.de";
 const DEFAULT_YCE_YOUWEN_API_URL = "https://a.aigy.de";
-const CLI_RUNTIME_KEYS = new Set(["claude-code", "codex", "qoder", "cursor", "kiro", "antigravity", "qwen", "opencode", "grok", "kimi"]);
+const CLI_RUNTIME_KEYS = new Set(["claude-code", "codex", "qoder", "cursor", "kiro"]);
 
 const CLI_DEFS = [
   {
@@ -38,7 +38,7 @@ const CLI_DEFS = [
     bin: "qodercli",
     binCandidates: ["qodercli", "qoder", "qoder-cli"],
     modelCommands: [["--list-models"]],
-    defaultModels: ["Cantus", "Auto", "Ultimate", "Performance", "Efficient", "Lite", "Qwen3.7-Max", "DeepSeek-V4-Pro"],
+    defaultModels: ["Auto", "Ultimate", "Performance", "Efficient", "Lite", "Qwen3.7-Max", "DeepSeek-V4-Pro"],
   },
   {
     runtime: "cursor",
@@ -56,55 +56,6 @@ const CLI_DEFS = [
     binCandidates: ["kiro-cli", "kiro"],
     modelCommands: [["chat", "--list-models", "--format", "json-pretty"], ["chat", "--list-models"]],
     defaultModels: ["auto", "claude-sonnet-4.5", "claude-sonnet-4", "claude-haiku-4.5", "deepseek-3.2", "qwen3-coder-next"],
-  },
-  {
-    runtime: "antigravity",
-    label: "Antigravity CLI",
-    bin: "agy",
-    binCandidates: ["agy", "antigravity", "antigravity-cli"],
-    modelCommands: [["models"]],
-    defaultModels: [
-      "Claude Opus 4.6 (Thinking)",
-      "Claude Sonnet 4.6 (Thinking)",
-      "Gemini 3.5 Flash (High)",
-      "Gemini 3.5 Flash (Medium)",
-      "Gemini 3.5 Flash (Low)",
-      "Gemini 3.1 Pro (High)",
-      "Gemini 3.1 Pro (Low)",
-      "GPT-OSS 120B (Medium)"
-    ],
-  },
-  {
-    runtime: "qwen",
-    label: "Qwen Code CLI",
-    bin: "qwen",
-    binCandidates: ["qwen", "qwen-code"],
-    modelCommands: [["models"]],
-    defaultModels: ["glm-5.2", "qwen3.5-max", "qwen3-coder-next", "qwen-coder-32b"],
-  },
-  {
-    runtime: "opencode",
-    label: "OpenCode CLI",
-    bin: "opencode",
-    binCandidates: ["opencode", "open-code"],
-    modelCommands: [["models"]],
-    defaultModels: ["opencode-go/kimi-k3", "auto", "anthropic/claude-3-7-sonnet", "openai/gpt-4o"],
-  },
-  {
-    runtime: "grok",
-    label: "Grok CLI",
-    bin: "grok",
-    binCandidates: ["grok", "grok-cli"],
-    modelCommands: [["models"]],
-    defaultModels: ["auto", "grok-3", "grok-3-mini"],
-  },
-  {
-    runtime: "kimi",
-    label: "Kimi CLI",
-    bin: "kimi",
-    binCandidates: ["kimi", "kimi-cli", "kimi-code"],
-    modelCommands: [],
-    defaultModels: ["auto", "kimi-k1.5", "kimi-k2.5"],
   },
 ];
 
@@ -137,7 +88,6 @@ const YCE_DEFAULT_MODE = "plan";
 /** Default CLI runtimes only — omit model so each CLI uses its own default. */
 function defaultModelEntries() {
   return [
-    { runtime: "antigravity", model: "Claude Opus 4.6 (Thinking)" },
     { runtime: "claude-code" },
     { runtime: "codex" },
     { runtime: "cursor" },
@@ -222,11 +172,8 @@ function parseModelList(text) {
   for (const rawLine of raw.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || /^available models$/i.test(line) || /^model$/i.test(line) || /^\*?\s*default/i.test(line)) continue;
-    if (isLikelyModelName(line)) lineModels.push(line);
-    else {
-      const match = line.match(/^(\*?\s*)([a-zA-Z0-9][a-zA-Z0-9._:() -]{1,})(?:\s|$)/);
-      if (match && isLikelyModelName(match[2])) lineModels.push(match[2].trim());
-    }
+    const match = line.match(/^(\*?\s*)([a-zA-Z0-9][a-zA-Z0-9._:-]{1,})(?:\s|$)/);
+    if (match) lineModels.push(match[2]);
   }
   if (lineModels.length > 0) return uniqueModels(lineModels);
 
@@ -278,7 +225,7 @@ function uniqueModels(models) {
 function isLikelyModelName(item) {
   const raw = String(item || "").trim();
   if (!raw || raw.length < 2) return false;
-  if (/[\r\n\t]/.test(raw)) return false;
+  if (/\s/.test(raw)) return false;
   if (/^(usage|options|commands|arguments|default|current|model|models|available|description|context_window_tokens|rate_multiplier|rate_unit|credit|credits|object|created|owned_by|type|display_name)$/i.test(raw)) return false;
   return /(?:gpt|claude|sonnet|opus|haiku|fable|gemini|grok|qwen|deepseek|glm|minimax|kimi|composer|codex|auto|lite|efficient|ultimate|performance|qmodel)/i.test(raw);
 }
@@ -836,13 +783,22 @@ function writeConfig({ models, yceEnabled, yceMode, yceRelayUrl }) {
   const compactModels = (Array.isArray(models) ? models : [])
     .map(compactModelEntry)
     .filter(Boolean);
+  // Preserve user tuning on rewrite: rotating a token or toggling YCE must not
+  // silently reset budget/timeout/enhance customizations.
+  const existing = readExistingConfig();
+  const existingYce = existing.yce && typeof existing.yce === "object" ? existing.yce : {};
   const config = {
     models: compactModels,
+    budgetMs: existing.budgetMs ?? 480000,
+    firstOutputTimeoutMs: existing.firstOutputTimeoutMs ?? 60000,
     yce: {
       enabled: Boolean(yceEnabled),
-      mode: yceMode || "plan",
+      mode: yceMode || existingYce.mode || "plan",
+      enhance: existingYce.enhance ?? false,
       script: "./vendor/yce/scripts/yce.js",
-      timeoutMs: 300000,
+      enhanceTimeoutMs: existingYce.enhanceTimeoutMs ?? 60000,
+      searchTimeoutMs: existingYce.searchTimeoutMs ?? 120000,
+      timeoutMs: existingYce.timeoutMs ?? 300000,
       ...(yceRelayUrl ? { relayUrl: yceRelayUrl } : {}),
     },
   };

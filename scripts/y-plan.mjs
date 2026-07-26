@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -24,6 +25,19 @@ const DEFAULT_TIMEOUT_MS = 300000;
 const DEFAULT_API_TIMEOUT_MS = 180000;
 const PROMPT_TRIM_CHARS = 7000;
 const PLANNING_CORE_TRIM_CHARS = 5000;
+// Total wall-clock budget. Callers (Claude Code Bash tool) hard-kill at 600s;
+// 480s default leaves headroom while funding real plan generation — a full
+// plan-shaped response from `claude -p` alone measures ~120s.
+const DEFAULT_BUDGET_MS = 480000;
+const MIN_MODEL_TIMEOUT_MS = 45000;
+const DEFAULT_FIRST_OUTPUT_TIMEOUT_MS = 60000;
+const DEFAULT_YCE_ENHANCE_TIMEOUT_MS = 60000;
+const DEFAULT_YCE_SEARCH_TIMEOUT_MS = 120000;
+const RUNS_ROOT_DIR = resolve(homedir(), ".y-plan", "runs");
+const RUN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+// Runtimes that stream text while generating; claude-code print mode buffers
+// the full answer, so a first-output timeout would falsely kill long plans.
+const STREAMING_RUNTIMES = new Set(["codex", "cursor", "gemini", "kiro", "qoder"]);
 
 /** Fallback CLI runtimes when y-plan.config.json is missing — no model pin; use CLI defaults. */
 const AUTO_DISCOVER_CLI = [
@@ -33,11 +47,6 @@ const AUTO_DISCOVER_CLI = [
   { runtime: "cursor", bins: ["cursor-agent", "agent", "cursor"] },
   { runtime: "kiro", bins: ["kiro-cli", "kiro"] },
   { runtime: "qoder", bins: ["qodercli", "qoder", "qoder-cli"] },
-  { runtime: "antigravity", bins: ["agy", "antigravity", "antigravity-cli"] },
-  { runtime: "qwen", bins: ["qwen", "qwen-code"] },
-  { runtime: "opencode", bins: ["opencode", "open-code"] },
-  { runtime: "grok", bins: ["grok", "grok-cli"] },
-  { runtime: "kimi", bins: ["kimi", "kimi-cli", "kimi-code"] },
 ];
 
 const BUILTIN_AGENT_CONFIG = {
@@ -91,18 +100,6 @@ const RUNTIME_ALIASES = new Map([
   ["cursor-cli", "cursor"],
   ["kiro", "kiro"],
   ["kiro-cli", "kiro"],
-  ["antigravity", "antigravity"],
-  ["antigravity-cli", "antigravity"],
-  ["agy", "antigravity"],
-  ["qwen", "qwen"],
-  ["qwen-code", "qwen"],
-  ["opencode", "opencode"],
-  ["open-code", "opencode"],
-  ["grok", "grok"],
-  ["grok-cli", "grok"],
-  ["kimi", "kimi"],
-  ["kimi-cli", "kimi"],
-  ["kimi-code", "kimi"],
 ]);
 
 const CODE_SEARCH_INTENT_PATTERNS = [
@@ -263,15 +260,24 @@ function usage(exitCode = 0) {
     "",
     "Usage:",
     "  node scripts/y-plan.mjs [--cwd path] [--use-yce] <task>",
+    "  node scripts/y-plan.mjs --resume <run-dir>",
     "  node scripts/y-plan.mjs --version",
     "  node scripts/y-plan.mjs --check-update",
     "",
     "Examples:",
     "  node scripts/y-plan.mjs \"Plan this refactor\"",
     "  node scripts/y-plan.mjs --use-yce --yce-mode auto --history \"User: ...\" \"Plan this code change\"",
+    "  node scripts/y-plan.mjs --budget-ms 180000 \"Plan this code change\"",
     "",
-    "Output: Markdown.",
-    "YCE default mode: plan (enhance prompt, decide whether code search is needed, then plan with both contexts).",
+    "Options:",
+    "  --budget-ms <ms>       total wall-clock budget (default 480000)",
+    "  --resume <run-dir>     resume an interrupted run; reuses its YCE prepass",
+    "  --yce-enhance          run YCE prompt enhancement (opt-in; off by default)",
+    "  --first-output-timeout-ms <ms>  kill a silent streaming model early (default 60000)",
+    "  --dry-run              print resolved model chain and budget allocation, call nothing",
+    "",
+    "Output: Markdown. Every run persists to ~/.y-plan/runs/<id>/ (prepass.json, plan.partial.md, plan.md).",
+    "YCE default mode: plan (code search when needed; prompt enhancement only with --yce-enhance).",
     "Models: y-plan.config.json models, or auto-discovered local CLIs when config is missing.",
   ].join("\n");
   (exitCode === 0 ? console.log : console.error)(out);
@@ -286,7 +292,14 @@ function parseArgs(argv) {
     useYce: envFlag(process.env.Y_PLAN_USE_YCE),
     yceExplicit: process.env.Y_PLAN_USE_YCE != null,
     yceMode: process.env.Y_PLAN_YCE_MODE || "",
+    yceEnhance: envFlag(process.env.Y_PLAN_YCE_ENHANCE),
+    yceEnhanceExplicit: process.env.Y_PLAN_YCE_ENHANCE != null,
     history: process.env.Y_PLAN_HISTORY || "",
+    budgetMs: Number(process.env.Y_PLAN_BUDGET_MS) || 0,
+    firstOutputTimeoutMs: Number(process.env.Y_PLAN_FIRST_OUTPUT_TIMEOUT_MS) || 0,
+    firstOutputTimeoutMsSet: process.env.Y_PLAN_FIRST_OUTPUT_TIMEOUT_MS != null,
+    resumeDir: "",
+    dryRun: false,
     showVersion: false,
     checkUpdate: false,
     task: "",
@@ -327,6 +340,33 @@ function parseArgs(argv) {
     }
     if (arg === "--yce-mode") {
       args.yceMode = argv[++i] || "plan";
+      continue;
+    }
+    if (arg === "--yce-enhance") {
+      args.yceEnhance = true;
+      args.yceEnhanceExplicit = true;
+      continue;
+    }
+    if (arg === "--no-yce-enhance") {
+      args.yceEnhance = false;
+      args.yceEnhanceExplicit = true;
+      continue;
+    }
+    if (arg === "--budget-ms") {
+      args.budgetMs = Number(argv[++i]) || 0;
+      continue;
+    }
+    if (arg === "--first-output-timeout-ms") {
+      args.firstOutputTimeoutMs = Number(argv[++i]) || 0;
+      args.firstOutputTimeoutMsSet = true;
+      continue;
+    }
+    if (arg === "--resume") {
+      args.resumeDir = argv[++i] || "";
+      continue;
+    }
+    if (arg === "--dry-run") {
+      args.dryRun = true;
       continue;
     }
     if (arg === "--history") {
@@ -381,7 +421,13 @@ function envFlag(value) {
 
 function readConfig(configPath) {
   if (!configPath || !existsSync(configPath)) return {};
-  return JSON.parse(readFileSync(configPath, "utf8"));
+  try {
+    return JSON.parse(readFileSync(configPath, "utf8"));
+  } catch (error) {
+    // A corrupt config degrades to auto-discovery instead of killing the run.
+    writeProgress(`[y-plan] warning: could not parse config ${configPath} (${error.message}); using defaults.`);
+    return {};
+  }
 }
 
 function readJsonFileIfExists(filePath) {
@@ -587,29 +633,57 @@ function writeYceProgress(event) {
   process.stderr.write(`${event.message}\n`);
 }
 
-function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS, onStdout, onStderr } = {}) {
+function killWithEscalation(child) {
+  child.kill("SIGTERM");
+  const killer = setTimeout(() => {
+    try { child.kill("SIGKILL"); } catch {}
+  }, 3000);
+  if (killer.unref) killer.unref();
+}
+
+let activeChild = null;
+
+function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS, firstOutputTimeoutMs = 0, onStdout, onStderr } = {}) {
   return new Promise((resolvePromise) => {
     const child = spawn(command.bin, command.args, {
       cwd,
       env: process.env,
-      stdio: [command.stdin != null ? "pipe" : "ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    if (command.stdin != null && child.stdin) {
-      child.stdin.write(command.stdin);
-      child.stdin.end();
-    }
+    activeChild = child;
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const timer = setTimeout(() => {
+    const settle = (result) => {
       if (settled) return;
       settled = true;
-      child.kill("SIGTERM");
-      resolvePromise({ code: 124, stdout, stderr: `${stderr}\nTimeout after ${timeoutMs}ms` });
+      clearTimeout(timer);
+      if (firstOutputTimer) clearTimeout(firstOutputTimer);
+      if (activeChild === child) activeChild = null;
+      resolvePromise(result);
+    };
+    const timer = setTimeout(() => {
+      killWithEscalation(child);
+      settle({ code: 124, stdout, stderr: `${stderr}\nTimeout after ${timeoutMs}ms` });
     }, timeoutMs);
+    // Fail fast on a hung model: a CLI that has produced zero output on BOTH
+    // streams by this deadline is treated as stuck so the fallback chain moves
+    // on instead of burning the full timeout. stderr counts as liveness — CLIs
+    // like codex write thinking/progress there long before the first stdout.
+    let firstOutputTimer = firstOutputTimeoutMs > 0
+      ? setTimeout(() => {
+          if (stdout.length > 0 || stderr.length > 0) return;
+          killWithEscalation(child);
+          settle({ code: 124, stdout, stderr: `${stderr}\nNo output after ${firstOutputTimeoutMs}ms (first-output timeout)` });
+        }, firstOutputTimeoutMs)
+      : null;
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
       stdout += text;
+      if (firstOutputTimer) {
+        clearTimeout(firstOutputTimer);
+        firstOutputTimer = null;
+      }
       if (onStdout) {
         try { onStdout(text); } catch {}
       }
@@ -622,21 +696,123 @@ function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS, onStdout
       }
     });
     child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolvePromise({ code: 127, stdout, stderr: `${stderr}${error.message}` });
+      settle({ code: 127, stdout, stderr: `${stderr}${error.message}` });
     });
     child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolvePromise({ code: code ?? 1, stdout, stderr });
+      settle({ code: code ?? 1, stdout, stderr });
     });
   });
 }
 
-async function runYcePrepass({ args, config, task, onProgress }) {
+// ---- run persistence: every run writes to ~/.y-plan/runs/<id>/ so an
+// interrupted caller can read plan.partial.md or resume with --resume. ----
+
+let activeRun = null;
+
+function safeWriteJson(filePath, value) {
+  try { writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8"); } catch {}
+}
+
+function readJsonQuiet(filePath) {
+  try { return JSON.parse(readFileSync(filePath, "utf8")); } catch { return null; }
+}
+
+function cleanupOldRuns() {
+  // Best-effort retention sweep: run dirs older than 7 days are deleted at
+  // startup so ~/.y-plan/runs never grows unbounded. Never touches the dir
+  // being resumed (the resume path runs after this and only needs its own dir).
+  for (const root of [RUNS_ROOT_DIR, resolve(tmpdir(), "y-plan-runs")]) {
+    let entries;
+    try { entries = readdirSync(root); } catch { continue; }
+    for (const name of entries) {
+      const dir = resolve(root, name);
+      try {
+        if (!statSync(dir).isDirectory()) continue;
+        const meta = readJsonQuiet(resolve(dir, "meta.json"));
+        const stamp = Date.parse(meta?.finishedAt || meta?.interruptedAt || meta?.crashedAt || meta?.startedAt || "")
+          || statSync(dir).mtimeMs;
+        if (Date.now() - stamp > RUN_RETENTION_MS) {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      } catch {
+        // ignore: cleanup must never block a run
+      }
+    }
+  }
+}
+
+function initRunDir(args) {
+  if (args.resumeDir) {
+    const dir = resolve(args.resumeDir);
+    if (!existsSync(dir)) {
+      throw new Error(`--resume dir not found: ${dir}`);
+    }
+    const meta = readJsonQuiet(resolve(dir, "meta.json"));
+    // Guard against typo'd paths: only resume a directory y-plan itself wrote.
+    if (!meta || typeof meta.task !== "string") {
+      throw new Error(`--resume dir has no valid y-plan meta.json: ${dir}`);
+    }
+    if (meta.status === "completed") {
+      // Restart a finished run cleanly: stale plan.md would read as instant success.
+      try { rmSync(resolve(dir, "plan.md"), { force: true }); } catch {}
+    }
+    return {
+      dir,
+      resumed: true,
+      meta,
+      cachedPrepass: readJsonQuiet(resolve(dir, "prepass.json")),
+    };
+  }
+  const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
+  let dir = resolve(RUNS_ROOT_DIR, id);
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch {
+    // Unwritable home (sandbox, CI): fall back to tmpdir instead of dying.
+    dir = resolve(tmpdir(), "y-plan-runs", id);
+    mkdirSync(dir, { recursive: true });
+  }
+  return { dir, resumed: false, meta: {}, cachedPrepass: null };
+}
+
+function runFile(run, name) {
+  return resolve(run.dir, name);
+}
+
+function persistMeta(run, patch) {
+  run.meta = { ...run.meta, ...patch };
+  safeWriteJson(runFile(run, "meta.json"), run.meta);
+}
+
+function installSignalHandlers() {
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(signal, () => {
+      if (activeChild) {
+        // SIGKILL directly: process.exit below would cancel a delayed escalation
+        // timer, orphaning a child that ignores SIGTERM.
+        try { activeChild.kill("SIGTERM"); } catch {}
+        try { activeChild.kill("SIGKILL"); } catch {}
+      }
+      if (activeRun) {
+        persistMeta(activeRun, { status: "interrupted", interruptedAt: new Date().toISOString(), signal });
+        writeProgress(`\n[y-plan] interrupted (${signal}). Partial output: ${runFile(activeRun, "plan.partial.md")}`);
+        writeProgress(`[y-plan] resume with: node ${JSON.stringify(resolve(__dirname, "y-plan.mjs"))} --resume ${JSON.stringify(activeRun.dir)}`);
+      }
+      process.exit(130);
+    });
+  }
+}
+
+function createBudget(totalMs) {
+  const startedAt = Date.now();
+  return {
+    totalMs,
+    elapsedMs: () => Date.now() - startedAt,
+    remainingMs: () => Math.max(0, totalMs - (Date.now() - startedAt)),
+  };
+}
+
+async function runYcePrepass({ args, config, task, budget, onProgress }) {
   const yceConfig = config.yce && typeof config.yce === "object" ? config.yce : {};
   const enabled = args.yceExplicit ? Boolean(args.useYce) : Boolean(yceConfig.enabled);
   if (!enabled) {
@@ -660,10 +836,23 @@ async function runYcePrepass({ args, config, task, onProgress }) {
 
   const history = args.history || yceConfig.history || `User: ${task}`;
   const mode = args.yceMode || yceConfig.mode || "plan";
-  const timeoutMs = Number(yceConfig.timeoutMs || DEFAULT_TIMEOUT_MS);
+  // Prompt enhancement is opt-in: only --yce-enhance / Y_PLAN_YCE_ENHANCE or
+  // config yce.enhance turns it on. Code search stays governed by intent detection.
+  const enhanceEnabled = args.yceEnhanceExplicit ? Boolean(args.yceEnhance) : Boolean(yceConfig.enhance);
+  const enhanceTimeoutMs = Number(yceConfig.enhanceTimeoutMs || DEFAULT_YCE_ENHANCE_TIMEOUT_MS);
+  const searchTimeoutMs = Number(yceConfig.searchTimeoutMs || yceConfig.timeoutMs || DEFAULT_YCE_SEARCH_TIMEOUT_MS);
+  // YCE is a prepass; the whole prepass (enhance + search combined) never eats
+  // more than a third of the total budget — tracked cumulatively, not per call.
+  const yceStartedAt = Date.now();
+  const yceBudgetCap = budget ? Math.floor(budget.totalMs / 3) : Infinity;
+  const clampToBudget = (wantedMs) => {
+    if (!budget) return wantedMs;
+    const yceRemaining = yceBudgetCap - (Date.now() - yceStartedAt);
+    return Math.max(1000, Math.min(wantedMs, yceRemaining, budget.remainingMs()));
+  };
   const runs = [];
 
-  const runYce = async (query, yceMode) => {
+  const runYce = async (query, yceMode, timeoutMs) => {
     report(`[y-plan] yce ${yceMode} running ...`);
     const yceArgs = [
       yceScript,
@@ -673,7 +862,7 @@ async function runYcePrepass({ args, config, task, onProgress }) {
       "--xml-pretty",
     ];
     if (history) yceArgs.push("--history", history);
-    const result = await runProcess({ bin: "node", args: yceArgs }, args.cwd, { timeoutMs });
+    const result = await runProcess({ bin: "node", args: yceArgs }, args.cwd, { timeoutMs: clampToBudget(timeoutMs) });
     const enhancedPrompt = extractTag(result.stdout, "prompt");
     const searchResult = extractTag(result.stdout, "result");
     const resolvedAction = extractTag(result.stdout, "resolved-action");
@@ -696,13 +885,21 @@ async function runYcePrepass({ args, config, task, onProgress }) {
   };
 
   if (mode === "plan") {
-    const enhanceRun = await runYce(task, "enhance");
-    const enhancedTask = enhanceRun.enhancedPrompt || task;
+    let enhanceRun = null;
+    let enhancedTask = task;
+    if (enhanceEnabled) {
+      enhanceRun = await runYce(task, "enhance", enhanceTimeoutMs);
+      // Enhancement is best-effort: on timeout/failure keep the original task.
+      enhancedTask = enhanceRun.enhancedPrompt || task;
+      report("[y-plan] yce enhance done.");
+    } else {
+      report("[y-plan] yce enhance skipped (opt-in; pass --yce-enhance to enable).");
+    }
     const shouldSearch = shouldRunYceSearch({ originalText: task, expandedText: enhancedTask, yceConfig });
-    report(shouldSearch ? "[y-plan] yce enhance done; code search needed." : "[y-plan] yce enhance done; no code search needed.");
+    report(shouldSearch ? "[y-plan] yce code search needed." : "[y-plan] yce code search not needed.");
     let searchRun = null;
     if (shouldSearch) {
-      searchRun = await runYce(enhancedTask, "search");
+      searchRun = await runYce(enhancedTask, "search", searchTimeoutMs);
     }
     const contextBlock = searchRun?.searchResult
       ? `\n\n[YCE code search context]\n${searchRun.searchResult}`
@@ -713,9 +910,10 @@ async function runYcePrepass({ args, config, task, onProgress }) {
       prompt: `${enhancedTask}${contextBlock}`,
       stdout: runs.map((run) => run.stdout).filter(Boolean).join("\n"),
       stderr: runs.map((run) => run.stderr).filter(Boolean).join("\n"),
-      code: searchRun?.code ?? enhanceRun.code,
+      code: searchRun?.code ?? enhanceRun?.code ?? 0,
       mode,
-      enhancedPrompt: enhanceRun.enhancedPrompt,
+      enhanceExecuted: Boolean(enhanceRun),
+      enhancedPrompt: enhanceRun?.enhancedPrompt || "",
       searchResult: searchRun?.searchResult || "",
       searchExecuted: Boolean(searchRun),
       runs,
@@ -732,7 +930,7 @@ async function runYcePrepass({ args, config, task, onProgress }) {
   if (history) yceArgs.push("--history", history);
 
   const result = await runProcess({ bin: "node", args: yceArgs }, args.cwd, {
-    timeoutMs,
+    timeoutMs: clampToBudget(Number(yceConfig.timeoutMs || DEFAULT_TIMEOUT_MS)),
   });
 
   const enhancedPrompt = extractTag(result.stdout, "prompt");
@@ -977,21 +1175,6 @@ function resolveRuntimeBin(runtime) {
   if (runtime === "kiro") {
     return process.env.Y_PLAN_KIRO_BIN || firstExistingBin(["kiro-cli", "kiro"]) || "kiro-cli";
   }
-  if (runtime === "antigravity") {
-    return process.env.Y_PLAN_ANTIGRAVITY_BIN || firstExistingBin(["agy", "antigravity", "antigravity-cli"]) || "agy";
-  }
-  if (runtime === "qwen") {
-    return process.env.Y_PLAN_QWEN_BIN || firstExistingBin(["qwen", "qwen-code"]) || "qwen";
-  }
-  if (runtime === "opencode") {
-    return process.env.Y_PLAN_OPENCODE_BIN || firstExistingBin(["opencode", "open-code"]) || "opencode";
-  }
-  if (runtime === "grok") {
-    return process.env.Y_PLAN_GROK_BIN || firstExistingBin(["grok", "grok-cli"]) || "grok";
-  }
-  if (runtime === "kimi") {
-    return process.env.Y_PLAN_KIMI_BIN || firstExistingBin(["kimi", "kimi-cli", "kimi-code"]) || "kimi";
-  }
   return runtime;
 }
 
@@ -1043,44 +1226,17 @@ function buildCommand(modelChoice, prompt) {
     args.push(prompt);
     return { bin: resolveRuntimeBin(runtime), args };
   }
-  if (runtime === "antigravity") {
-    const args = ["-p"];
-    if (model) args.push("--model", model);
-    args.push("--mode", "plan");
-    args.push(prompt);
-    return { bin: resolveRuntimeBin(runtime), args };
-  }
-  if (runtime === "qwen") {
-    const args = ["-p"];
-    if (model) args.push("-m", model);
-    args.push(prompt);
-    return { bin: resolveRuntimeBin(runtime), args };
-  }
-  if (runtime === "opencode") {
-    const args = ["--prompt"];
-    if (model) args.push("-m", model);
-    args.push(prompt);
-    return { bin: resolveRuntimeBin(runtime), args };
-  }
-  if (runtime === "grok") {
-    const args = ["-p", prompt, "--permission-mode", "plan"];
-    if (model) args.push("-m", model);
-    return { bin: resolveRuntimeBin(runtime), args };
-  }
-  if (runtime === "kimi") {
-    const args = ["--print"];
-    if (model) args.push("-m", model);
-    return { bin: resolveRuntimeBin(runtime), args, stdin: prompt };
-  }
   throw new Error(`Unsupported runtime: ${runtime}`);
 }
 
-async function runModel(modelChoice, prompt, cwd, { onOutput } = {}) {
+async function runModel(modelChoice, prompt, cwd, { onOutput, timeoutMs, firstOutputTimeoutMs } = {}) {
   if (isApiRuntime(modelChoice.runtime)) {
-    return runApiModel(modelChoice, prompt, { onOutput });
+    return runApiModel(modelChoice, prompt, { onOutput, timeoutMs });
   }
   const command = buildCommand(modelChoice, prompt);
   return runProcess(command, cwd, {
+    timeoutMs: timeoutMs || Number(modelChoice.timeoutMs) || DEFAULT_API_TIMEOUT_MS,
+    firstOutputTimeoutMs: STREAMING_RUNTIMES.has(modelChoice.runtime) ? (firstOutputTimeoutMs || 0) : 0,
     onStdout: (text) => {
       if (onOutput) onOutput({ stream: "stdout", text });
     },
@@ -1094,13 +1250,14 @@ function isApiRuntime(runtime) {
   return runtime === "claude-api" || runtime === "openai-chat" || runtime === "openai-responses";
 }
 
-async function runApiModel(modelChoice, prompt, { onOutput } = {}) {
+async function runApiModel(modelChoice, prompt, { onOutput, timeoutMs } = {}) {
   const runtime = modelChoice.runtime;
+  const effectiveTimeoutMs = Number(timeoutMs || modelChoice.timeoutMs || DEFAULT_API_TIMEOUT_MS);
   try {
     const { url, headers, body } = buildApiRequest(modelChoice, prompt);
     if (onOutput) onOutput({ stream: "progress", text: `[${runtime}/${modelChoice.model || ""}] requesting ${url}\n` });
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Number(modelChoice.timeoutMs || DEFAULT_API_TIMEOUT_MS));
+    const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
     let response;
     try {
       response = await fetch(url, {
@@ -1142,7 +1299,7 @@ async function runApiModel(modelChoice, prompt, { onOutput } = {}) {
     return { code: 0, stdout: output, stderr: "" };
   } catch (error) {
     if (error.name === "AbortError") {
-      return { code: 124, stdout: "", stderr: `${runtime} API timed out after ${modelChoice.timeoutMs || DEFAULT_API_TIMEOUT_MS}ms` };
+      return { code: 124, stdout: "", stderr: `${runtime} API timed out after ${effectiveTimeoutMs}ms` };
     }
     return { code: 1, stdout: "", stderr: `${runtime} API request failed: ${error.message}` };
   }
@@ -1379,12 +1536,12 @@ function extractYPlanBlock(stdout) {
   return match ? match[0].trim() : text;
 }
 
-function emitResult({ success, modelChoice, attempts, cwd, selected, missing, stdout, stderr, code, ycePrepass }) {
+function emitResult({ success, modelChoice, attempts, cwd, selected, missing, stdout, stderr, code, ycePrepass, runDir }) {
   const planOutput = extractYPlanBlock(stdout);
-  emitMarkdownResult({ success, modelChoice, attempts, cwd, selected, missing, planOutput, stderr, code, ycePrepass });
+  emitMarkdownResult({ success, modelChoice, attempts, cwd, selected, missing, planOutput, stderr, code, ycePrepass, runDir });
 }
 
-function emitMarkdownResult({ success, modelChoice, attempts, cwd, selected, missing, planOutput, stderr, code, ycePrepass }) {
+function emitMarkdownResult({ success, modelChoice, attempts, cwd, selected, missing, planOutput, stderr, code, ycePrepass, runDir }) {
   const lines = [
     "# Y-Plan Result",
     "",
@@ -1394,6 +1551,7 @@ function emitMarkdownResult({ success, modelChoice, attempts, cwd, selected, mis
     `- CWD: ${cwd}`,
     `- Exit code: ${code}`,
     `- YCE: ${ycePrepass.enabled ? `enabled (${ycePrepass.code})` : "disabled"}`,
+    ...(runDir ? [`- Run dir: ${runDir}`] : []),
     "",
     "## Fallback Attempts",
     "",
@@ -1433,6 +1591,7 @@ function renderYcePrepassSummary(ycePrepass) {
   const lines = [
     `- Mode: ${ycePrepass.mode || "unknown"}`,
     `- Exit code: ${ycePrepass.code}`,
+    `- Enhance executed: ${ycePrepass.enhanceExecuted ? "true" : "false (opt-in; --yce-enhance)"}`,
     `- Search executed: ${ycePrepass.searchExecuted ? "true" : "false"}`,
   ];
 
@@ -1531,6 +1690,59 @@ function cleanPlanText(value) {
     .trim());
 }
 
+function emitDryRun(args, config) {
+  const budgetMs = args.budgetMs || Number(config.budgetMs) || DEFAULT_BUDGET_MS;
+  const firstOutputTimeoutMs = args.firstOutputTimeoutMsSet
+    ? args.firstOutputTimeoutMs
+    : (config.firstOutputTimeoutMs != null ? Number(config.firstOutputTimeoutMs) : DEFAULT_FIRST_OUTPUT_TIMEOUT_MS);
+  const agentConfigInfo = loadAgentConfig(args, config);
+  const modelChoices = resolveModelChoices(args, config, agentConfigInfo.config);
+  const yceConfig = config.yce && typeof config.yce === "object" ? config.yce : {};
+  const yceEnabled = args.yceExplicit ? Boolean(args.useYce) : Boolean(yceConfig.enabled);
+  const enhanceEnabled = args.yceEnhanceExplicit ? Boolean(args.yceEnhance) : Boolean(yceConfig.enhance);
+  const yceCapMs = Math.floor(budgetMs / 3);
+
+  const lines = [
+    "# Y-Plan Dry Run",
+    "",
+    `- Config: ${args.config}`,
+    `- CWD: ${args.cwd}`,
+    `- Budget: ${budgetMs}ms`,
+    `- First-output timeout: ${firstOutputTimeoutMs === 0 ? "disabled" : `${firstOutputTimeoutMs}ms (streaming CLIs only)`}`,
+    `- YCE: ${yceEnabled ? `enabled (mode ${args.yceMode || yceConfig.mode || "plan"}, enhance ${enhanceEnabled ? "on" : "off"}, cap ${yceCapMs}ms = budget/3)` : "disabled"}`,
+    "",
+    "## Model Chain",
+    "",
+  ];
+  // Worst-case walkthrough: every model times out, so each row shows the
+  // timeout the model WOULD get when reached with the budget drained by all
+  // previous rows. Real runs stop at the first success.
+  let remaining = budgetMs - (yceEnabled ? yceCapMs : 0);
+  for (let i = 0; i < modelChoices.length; i += 1) {
+    const remainingModels = modelChoices.length - i;
+    if (remaining < MIN_MODEL_TIMEOUT_MS) {
+      lines.push(`- ${i + 1}. ${formatModelLabel(modelChoices[i])}: NOT REACHED (worst case: <${MIN_MODEL_TIMEOUT_MS}ms left)`);
+      continue;
+    }
+    const timeoutMs = Math.min(remaining, Math.max(MIN_MODEL_TIMEOUT_MS, Math.floor(remaining / Math.min(remainingModels, 2))));
+    const firstOutputNote = STREAMING_RUNTIMES.has(modelChoices[i].runtime) && firstOutputTimeoutMs > 0
+      ? `, first-output ${firstOutputTimeoutMs}ms`
+      : "";
+    lines.push(`- ${i + 1}. ${formatModelLabel(modelChoices[i])}: timeout ${timeoutMs}ms${firstOutputNote}`);
+    remaining -= timeoutMs;
+  }
+  lines.push(
+    "",
+    "## Notes",
+    "",
+    `- Worst-case walkthrough above assumes every model times out; a real run stops at the first success.`,
+    `- YCE cap is cumulative across enhance+search and unused YCE time flows back to the models.`,
+    `- Run persistence would write to ${RUNS_ROOT_DIR}/<id>/ (7-day retention).`,
+    "- No model, YCE, or filesystem run-dir calls were made.",
+  );
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
@@ -1567,10 +1779,63 @@ async function main() {
   }
 
   const config = readConfig(args.config);
-  const originalTask = await readStdinIfNeeded(args.task);
-  if (!originalTask) usage(1);
 
-  const ycePrepass = await runYcePrepass({ args, config, task: originalTask, onProgress: writeYceProgress });
+  if (args.dryRun) {
+    emitDryRun(args, config);
+    process.exit(0);
+  }
+
+  cleanupOldRuns();
+  const run = initRunDir(args);
+  activeRun = run;
+  installSignalHandlers();
+
+  // On resume, the persisted task wins before any stdin read — reading stdin
+  // here could hang forever under harnesses that keep the pipe open.
+  const originalTask = args.resumeDir
+    ? (args.task || run.meta.task || "")
+    : await readStdinIfNeeded(args.task);
+  if (!originalTask) usage(1);
+  // Resume keeps the original run's cwd unless the caller overrides it.
+  if (run.resumed && run.meta.cwd && args.cwd === process.cwd()) {
+    args.cwd = run.meta.cwd;
+  }
+  // A resumed run given a DIFFERENT task must not reuse the old task's prepass.
+  if (run.resumed && run.cachedPrepass && run.meta.task && originalTask !== run.meta.task) {
+    writeProgress("[y-plan] resume: task text changed; discarding cached YCE prepass.");
+    run.cachedPrepass = null;
+  }
+
+  const budgetMs = args.budgetMs || Number(config.budgetMs) || DEFAULT_BUDGET_MS;
+  // "0" must stay 0 (explicitly disables the first-output timer), so use ??
+  // fallbacks instead of ||-chaining.
+  const firstOutputTimeoutMs = args.firstOutputTimeoutMsSet
+    ? args.firstOutputTimeoutMs
+    : (config.firstOutputTimeoutMs != null ? Number(config.firstOutputTimeoutMs) : DEFAULT_FIRST_OUTPUT_TIMEOUT_MS);
+  const budget = createBudget(budgetMs);
+
+  writeProgress(`[y-plan] run dir: ${run.dir} (budget ${Math.round(budgetMs / 1000)}s)`);
+  persistMeta(run, {
+    status: "running",
+    task: originalTask,
+    cwd: args.cwd,
+    budgetMs,
+    startedAt: run.meta.startedAt || new Date().toISOString(),
+    resumed: run.resumed,
+  });
+
+  // Resume reuses the persisted YCE prepass so an interrupted run never pays
+  // for enhancement/search twice.
+  let ycePrepass;
+  if (run.resumed && run.cachedPrepass) {
+    writeProgress("[y-plan] resume: reusing cached YCE prepass.");
+    ycePrepass = run.cachedPrepass;
+  } else {
+    ycePrepass = await runYcePrepass({ args, config, task: originalTask, budget, onProgress: writeYceProgress });
+    safeWriteJson(runFile(run, "prepass.json"), ycePrepass);
+  }
+  persistMeta(run, { prepassDone: true });
+
   const task = ycePrepass.prompt || originalTask;
   const agentConfigInfo = loadAgentConfig(args, config);
   const modelChoices = resolveModelChoices(args, config, agentConfigInfo.config);
@@ -1578,13 +1843,49 @@ async function main() {
   const attempts = [];
   let finalChoice = modelChoices[0];
   let finalResult = { code: 1, stdout: "", stderr: "No model choices configured." };
+  const partialPath = runFile(run, "plan.partial.md");
+  const currentAttempt = { index: 0 };
 
-  for (const modelChoice of modelChoices) {
+  for (let i = 0; i < modelChoices.length; i += 1) {
+    const modelChoice = modelChoices[i];
+    currentAttempt.index = i;
+    const remainingModels = modelChoices.length - i;
+    // A model gets half the remaining budget (all of it if it's the last one):
+    // an even N-way split starves the first — usually best — model. The result
+    // is clamped to what's actually left so the budget is a true wall-clock cap,
+    // and models with less than the minimum viable window are never scheduled.
+    if (budget.remainingMs() < MIN_MODEL_TIMEOUT_MS) {
+      writeProgress(`[y-plan] budget exhausted (${Math.round(budget.elapsedMs() / 1000)}s elapsed, <${Math.round(MIN_MODEL_TIMEOUT_MS / 1000)}s left); stopping fallback chain.`);
+      finalResult = { code: 124, stdout: "", stderr: `Budget of ${budgetMs}ms exhausted before ${formatModelLabel(modelChoice)} could run.` };
+      break;
+    }
+    const modelTimeoutMs = Math.min(
+      budget.remainingMs(),
+      Math.max(MIN_MODEL_TIMEOUT_MS, Math.floor(budget.remainingMs() / Math.min(remainingModels, 2))),
+    );
     finalChoice = modelChoice;
     const prompt = buildPrompt({ task, originalTask, cwd: args.cwd, modelChoice, selected, missing, root, ycePrepass, agentConfigInfo });
-    writeProgress(`[y-plan] planning with ${formatModelLabel(modelChoice)} ...`);
+    writeProgress(`[y-plan] planning with ${formatModelLabel(modelChoice)} (timeout ${Math.round(modelTimeoutMs / 1000)}s) ...`);
+    // Keep the previous attempt's partial instead of destroying it — a timed-out
+    // model may have produced a near-complete plan worth reading.
+    if (i > 0) {
+      try { renameSync(partialPath, runFile(run, `plan.partial.attempt${i}.md`)); } catch {}
+    }
+    try { writeFileSync(partialPath, `<!-- y-plan partial output: ${formatModelLabel(modelChoice)} -->\n`, "utf8"); } catch {}
+    persistMeta(run, { currentModel: formatModelLabel(modelChoice) });
+    const attemptIndex = i;
     const result = await runModel(modelChoice, prompt, args.cwd, {
-      onOutput: (event) => writeModelOutput(modelChoice, event),
+      timeoutMs: modelTimeoutMs,
+      firstOutputTimeoutMs,
+      onOutput: (event) => {
+        // Late flushes from a killed previous attempt must not interleave into
+        // the current attempt's partial file.
+        if (attemptIndex !== currentAttempt.index) return;
+        if (event?.stream === "stdout" && event.text) {
+          try { appendFileSync(partialPath, event.text, "utf8"); } catch {}
+        }
+        writeModelOutput(modelChoice, event);
+      },
     });
     attempts.push({ ...modelChoice, code: result.code });
     finalResult = result;
@@ -1592,8 +1893,20 @@ async function main() {
     writeProgress(`[y-plan] ${formatModelLabel(modelChoice)} returned no usable output (exit ${result.code}); trying next model.`);
   }
 
+  const success = finalResult.code === 0 && finalResult.stdout.trim().length > 0;
+  if (success) {
+    try { writeFileSync(runFile(run, "plan.md"), `${extractYPlanBlock(finalResult.stdout)}\n`, "utf8"); } catch {}
+  }
+  persistMeta(run, {
+    status: success ? "completed" : "failed",
+    finishedAt: new Date().toISOString(),
+    model: formatModelLabel(finalChoice),
+    exitCode: finalResult.code,
+    attempts: attempts.map((a) => ({ model: formatModelLabel(a), code: a.code })),
+  });
+
   emitResult({
-    success: finalResult.code === 0 && finalResult.stdout.trim().length > 0,
+    success,
     modelChoice: finalChoice,
     attempts,
     cwd: args.cwd,
@@ -1603,11 +1916,15 @@ async function main() {
     stderr: finalResult.stderr,
     code: finalResult.code,
     ycePrepass,
+    runDir: run.dir,
   });
   process.exit(finalResult.code === 0 ? 0 : finalResult.code);
 }
 
 main().catch((error) => {
+  if (activeRun) {
+    persistMeta(activeRun, { status: "crashed", crashedAt: new Date().toISOString(), error: String(error.message || error) });
+  }
   process.stdout.write(`# Y-Plan Result
 
 - Success: false

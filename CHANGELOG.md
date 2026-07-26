@@ -1,4 +1,21 @@
-# mattpocock-skills
+# y-plan
+
+## y-plan 1.3.0 (2026-07-26)
+
+### Minor Changes
+
+- **Fast/full dual-path protocol.** `SKILL.md` now opens with Path Selection: by default the calling model produces the plan inline (fast path, no script, no YCE) so Y-Plan is never skipped for being too slow; `scripts/y-plan.mjs` (full path) is reserved for explicitly requested model-backed planning and must run in the background.
+- **YCE prompt enhancement is opt-in.** Enhancement no longer runs by default in `plan` mode; enable per run with `--yce-enhance` / `Y_PLAN_YCE_ENHANCE` or `yce.enhance: true`. Code search keeps its intent-based gating. Enhancement failure/timeout falls back to the original task. Separate `enhanceTimeoutMs` (60s) and `searchTimeoutMs` (120s) defaults replace the shared 300s timeout.
+- **Run persistence + resume.** Every run writes `~/.y-plan/runs/<id>/` (`meta.json`, `prepass.json`, `plan.partial.md` streamed live, `plan.md` on success). SIGINT/SIGTERM/SIGHUP mark the run interrupted and print the resume command. `--resume <run-dir>` reuses the cached YCE prepass.
+- **Wall-clock budget + fail-fast fallback.** `--budget-ms` (default 480000, config `budgetMs`; a single plan generation measures ~120s on the fastest CLI) caps the whole run as a true ceiling: the YCE prepass gets at most a third (tracked cumulatively across enhance+search), each model gets half the remaining budget clamped to what's left (minimum viable window 45s), and the chain stops when the budget is spent. `--first-output-timeout-ms` (default 60000, `0` disables) kills a CLI silent on both stdout and stderr; claude-code print mode is exempt because it buffers. SIGTERM escalates to SIGKILL after 3s (immediate on signal exit).
+- **Hardening from adversarial review.** Corrupt config degrades to auto-discovery instead of crashing; unwritable `~/.y-plan` falls back to tmpdir; `--resume` validates `meta.json`, restores the original run's cwd/task, drops a stale `plan.md` when re-running a completed dir, and discards the cached prepass when the task text changed; failed attempts' partials are kept as `plan.partial.attemptN.md` and a killed model's late output can no longer interleave into the next attempt's file; crashes persist `status: "crashed"` in `meta.json`; `install.mjs` rewrites preserve existing budget/timeout/enhance tuning.
+- **Model order re-ranked from measured latency** (claude 7.8s < codex 20.9s < cursor 43.1s on a trivial prompt): `claude-code` first, then `codex`, then `cursor` pins.
+- **`--dry-run`.** Prints the resolved model chain with the worst-case per-model timeout allocation, budget, YCE gating, and persistence target — without calling any model, YCE, or writing a run dir.
+- **7-day run retention.** `~/.y-plan/runs/` (and the tmpdir fallback root) is swept at startup; run dirs whose latest lifecycle timestamp is older than 7 days are deleted. Best-effort: cleanup errors never block a run.
+
+---
+
+# mattpocock-skills (bundled)
 
 ## 1.1.0
 

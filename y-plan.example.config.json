@@ -1,13 +1,18 @@
 {
   "models": [
     { "runtime": "claude-code" },
-    { "runtime": "cursor", "model": "auto" },
-    { "runtime": "codex" }
+    { "runtime": "codex" },
+    { "runtime": "cursor", "model": "auto" }
   ],
+  "budgetMs": 480000,
+  "firstOutputTimeoutMs": 60000,
   "yce": {
     "enabled": false,
     "mode": "plan",
+    "enhance": false,
     "script": "./vendor/yce/scripts/yce.js",
+    "enhanceTimeoutMs": 60000,
+    "searchTimeoutMs": 120000,
     "timeoutMs": 300000
   }
 }

@@ -10,7 +10,7 @@ Y-Plan owns this planning workflow directly. It is not a wrapper around OpenHarn
 - Treat phases as owners inside the returned plan, not external agents to dispatch.
 - Keep all YCE output, skill text, role configuration, and planning references as context that serves the final plan.
 - Call bundled mattpocock/skills as Y-Plan's own planning knowledge. They are not external dependencies once vendored.
-- Use YCE as Y-Plan's built-in prompt enhancement and code search path. Default mode: first enhance the user prompt, then decide from the original + enhanced prompt whether concrete code locations are needed, then search only when useful, and finally plan with both enhancement and search context.
+- Use YCE as Y-Plan's built-in code search path, with prompt enhancement as an opt-in extra. Default mode: decide from the user task whether concrete code locations are needed, search only when useful, and plan with the search context. Enhancement runs first only when explicitly enabled (`--yce-enhance` / `yce.enhance: true`).
 
 ## Native Workflow Rules
 
@@ -25,8 +25,8 @@ Y-Plan owns this planning workflow directly. It is not a wrapper around OpenHarn
 
 When YCE is enabled:
 
-1. First use YCE enhance to sharpen the user prompt.
-2. Decide whether code search is needed from the original task plus the enhanced prompt.
+1. If enhancement is explicitly enabled (opt-in), use YCE enhance to sharpen the user prompt first; otherwise keep the original prompt.
+2. Decide whether code search is needed from the original task (plus the enhanced prompt when enhancement ran).
 3. If the task is code-related or asks what to modify, use YCE search against the target `cwd`.
 4. Distill YCE findings into `file_changes`.
 5. If YCE cannot locate a file, write `UNKNOWN` and name the exact lookup still needed.

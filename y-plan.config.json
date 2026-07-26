@@ -1,48 +1,19 @@
 {
   "models": [
-    {
-      "runtime": "antigravity",
-      "model": "Claude Opus 4.6 (Thinking)"
-    },
-    {
-      "runtime": "antigravity",
-      "model": "Gemini 3.1 Pro (High)"
-    },
-    {
-      "runtime": "claude-code"
-    },
-    {
-      "runtime": "codex"
-    },
-    {
-      "runtime": "qoder",
-      "model": "Cantus"
-    },
-    {
-      "runtime": "opencode",
-      "model": "opencode-go/kimi-k3"
-    },
-    {
-      "runtime": "qwen",
-      "model": "glm-5.2"
-    },
-    {
-      "runtime": "cursor"
-    },
-    {
-      "runtime": "kiro"
-    },
-    {
-      "runtime": "grok"
-    },
-    {
-      "runtime": "kimi"
-    }
+    { "runtime": "claude-code" },
+    { "runtime": "codex" },
+    { "runtime": "cursor", "model": "claude-fable-5-thinking-high" },
+    { "runtime": "cursor", "model": "auto" }
   ],
+  "budgetMs": 480000,
+  "firstOutputTimeoutMs": 60000,
   "yce": {
     "enabled": true,
     "mode": "plan",
+    "enhance": false,
     "script": "./vendor/yce/scripts/yce.js",
+    "enhanceTimeoutMs": 60000,
+    "searchTimeoutMs": 120000,
     "timeoutMs": 300000,
     "relayUrl": "https://yce.aigy.de"
   }
