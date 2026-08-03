@@ -96,7 +96,8 @@ function defaultModelEntries() {
 
 function modelEntryKey(entry) {
   if (!entry || !entry.runtime) return "";
-  return entry.model ? `${entry.runtime}/${entry.model}` : entry.runtime;
+  const effort = entry.effort ?? entry.thinking ?? entry.reasoningEffort ?? "";
+  return entry.model ? `${entry.runtime}/${entry.model}/${effort}` : `${entry.runtime}//${effort}`;
 }
 
 function compactModelEntry(entry) {
@@ -105,6 +106,10 @@ function compactModelEntry(entry) {
   if (entry.model) out.model = entry.model;
   // Preserve optional API fields
   for (const key of ["url", "baseUrl", "urlEnv", "baseUrlEnv", "token", "apiKey", "tokenEnv", "apiKeyEnv", "anthropicVersion"]) {
+    if (entry[key] != null && entry[key] !== "") out[key] = entry[key];
+  }
+  // Preserve optional thinking/effort fields
+  for (const key of ["effort", "thinking", "reasoningEffort"]) {
     if (entry[key] != null && entry[key] !== "") out[key] = entry[key];
   }
   return out;

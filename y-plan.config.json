@@ -1,9 +1,7 @@
 {
   "models": [
-    { "runtime": "claude-code" },
-    { "runtime": "codex" },
-    { "runtime": "cursor", "model": "claude-fable-5-thinking-high" },
-    { "runtime": "cursor", "model": "auto" }
+    { "runtime": "codex", "model": "gpt-5.6-sol" },
+    { "runtime": "cursor", "model": "claude-fable-5-thinking-high" }
   ],
   "budgetMs": 480000,
   "firstOutputTimeoutMs": 60000,

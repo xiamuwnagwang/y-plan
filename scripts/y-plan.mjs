@@ -399,7 +399,9 @@ function commandExists(bin) {
 
 function formatModelLabel(entry) {
   if (!entry) return "(none)";
-  return entry.model ? `${entry.runtime}/${entry.model}` : `${entry.runtime} (cli-default)`;
+  const effort = resolveEffort(entry);
+  const model = entry.model ? `${entry.runtime}/${entry.model}` : `${entry.runtime} (cli-default)`;
+  return effort ? `${model} (effort=${effort})` : model;
 }
 
 function discoverLocalModelChoices() {
@@ -1185,14 +1187,34 @@ function firstExistingBin(bins) {
   return "";
 }
 
+/**
+ * Resolve the thinking/effort level from a model entry.
+ * Accepted keys: `effort`, `thinking`, `reasoningEffort`. Value is normalized
+ * to lowercase; empty values are treated as unset.
+ *  - claude-code maps it to `--effort <level>` (low/medium/high/xhigh/max)
+ *  - codex maps it to `-c model_reasoning_effort=<level>` (low/medium/high/xhigh/ultra/max)
+ */
+function resolveEffort(modelChoice) {
+  if (!modelChoice || typeof modelChoice !== "object") return "";
+  for (const key of ["effort", "thinking", "reasoningEffort"]) {
+    const value = modelChoice[key];
+    if (value != null && String(value).trim() !== "") {
+      return String(value).trim().toLowerCase();
+    }
+  }
+  return "";
+}
+
 function buildCommand(modelChoice, prompt) {
   const { runtime, model } = modelChoice;
+  const effort = resolveEffort(modelChoice);
   if (runtime === "claude-code") {
     // Do NOT pass --tools "" : Claude CLI treats the next argv as the tools
     // value when the empty string is ambiguous, which swallows the prompt and
     // yields "Input must be provided...". Model is optional (CLI default works).
     const args = ["-p", "--permission-mode", "plan"];
     if (model) args.push("--model", model);
+    if (effort) args.push("--effort", effort);
     args.push(prompt);
     return { bin: resolveRuntimeBin(runtime), args };
   }
@@ -1205,6 +1227,7 @@ function buildCommand(modelChoice, prompt) {
   if (runtime === "codex") {
     const args = ["exec", "--skip-git-repo-check"];
     if (model) args.push("-m", model);
+    if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
     args.push("--", prompt);
     return { bin: resolveRuntimeBin(runtime), args };
   }

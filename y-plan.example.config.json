@@ -1,7 +1,7 @@
 {
   "models": [
-    { "runtime": "claude-code" },
-    { "runtime": "codex" },
+    { "runtime": "claude-code", "effort": "high" },
+    { "runtime": "codex", "effort": "high" },
     { "runtime": "cursor", "model": "auto" }
   ],
   "budgetMs": 480000,
