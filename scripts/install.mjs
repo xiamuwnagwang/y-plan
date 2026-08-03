@@ -38,7 +38,7 @@ const CLI_DEFS = [
     bin: "qodercli",
     binCandidates: ["qodercli", "qoder", "qoder-cli"],
     modelCommands: [["--list-models"]],
-    defaultModels: ["Auto", "Ultimate", "Performance", "Efficient", "Lite", "Qwen3.7-Max", "DeepSeek-V4-Pro"],
+    defaultModels: ["Auto", "Ultimate", "Performance", "Efficient", "Lite", "Cantus", "Qwen3.7-Max", "DeepSeek-V4-Pro"],
   },
   {
     runtime: "cursor",
