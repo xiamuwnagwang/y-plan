@@ -1193,6 +1193,7 @@ function firstExistingBin(bins) {
  * to lowercase; empty values are treated as unset.
  *  - claude-code maps it to `--effort <level>` (low/medium/high/xhigh/max)
  *  - codex maps it to `-c model_reasoning_effort=<level>` (low/medium/high/xhigh/ultra/max)
+ *  - qoder maps it to `--reasoning-effort <level>`
  */
 function resolveEffort(modelChoice) {
   if (!modelChoice || typeof modelChoice !== "object") return "";
@@ -1234,6 +1235,7 @@ function buildCommand(modelChoice, prompt) {
   if (runtime === "qoder") {
     const args = ["-p"];
     if (model) args.push("--model", model);
+    if (effort) args.push("--reasoning-effort", effort);
     args.push(prompt);
     return { bin: resolveRuntimeBin(runtime), args };
   }
