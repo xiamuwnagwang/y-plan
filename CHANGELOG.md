@@ -1,5 +1,12 @@
 # y-plan
 
+## y-plan 1.3.1 (2026-08-05)
+
+### Patch Changes
+
+- **Windows CLI 启动兼容。** npm 生成的无扩展名 POSIX shim 不再被 Node 直接 `spawn`；Windows 下会解析可执行入口，并通过 `cmd.exe /d /s /c` 启动 `.cmd/.bat` CLI。
+- **同步最新内置 skills。** 根目录和 Y-Plan 实际加载的 `vendor/mattpocock-skills` 均同步到上游 `mattpocock/skills` 提交 `2ffb184`，同时更新对应文档和插件清单。
+
 ## y-plan 1.3.0 (2026-07-26)
 
 ### Minor Changes
