@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { commandExists, spawnSyncCommand } from "./lib/cli-runtime.mjs";
 
 const __dirname = import.meta.url.startsWith("file:///$bunfs/")
   ? dirname(process.execPath)
@@ -115,23 +115,11 @@ function compactModelEntry(entry) {
   return out;
 }
 
-function commandExists(bin) {
-  if (!bin) return false;
-  if (process.platform === "win32") {
-    return spawnSync("where", [bin], { encoding: "utf8", timeout: 3000 }).status === 0;
-  }
-  return spawnSync("sh", ["-lc", `command -v ${quoteShell(bin)}`], { encoding: "utf8", timeout: 3000 }).status === 0;
-}
-
 function resolveBin(def) {
   for (const bin of [def.bin, ...(def.binCandidates || [])]) {
     if (bin && commandExists(bin)) return bin;
   }
   return def.bin;
-}
-
-function quoteShell(value) {
-  return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
 function tryDiscoverModels(def) {
@@ -150,7 +138,7 @@ function tryDiscoverModels(def) {
   ));
 
   for (const [bin, args] of attempts) {
-    const result = spawnSync(bin, args, { encoding: "utf8", timeout: 5000 });
+    const result = spawnSyncCommand({ bin, args }, { encoding: "utf8", timeout: 5000, windowsHide: true });
     const text = `${result.stdout || ""}\n${result.stderr || ""}`;
     if (result.status !== 0 || !text.trim()) continue;
     if (/^\s*Usage:/im.test(text) || /\bOptions:\b/i.test(text)) continue;

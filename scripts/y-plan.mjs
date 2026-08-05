@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -10,6 +10,7 @@ import {
   formatVersionLine,
   readLocalVersion,
 } from "./lib/version.mjs";
+import { commandExists, prepareSpawnCommand } from "./lib/cli-runtime.mjs";
 
 const __dirname = import.meta.url.startsWith("file:///$bunfs/")
   ? dirname(process.execPath)
@@ -386,17 +387,6 @@ function parseArgs(argv) {
   return args;
 }
 
-function commandExists(bin) {
-  if (!bin) return false;
-  if (process.platform === "win32") {
-    return spawnSync("where", [bin], { encoding: "utf8", timeout: 3000 }).status === 0;
-  }
-  return spawnSync("sh", ["-lc", `command -v ${JSON.stringify(bin)}`], {
-    encoding: "utf8",
-    timeout: 3000,
-  }).status === 0;
-}
-
 function formatModelLabel(entry) {
   if (!entry) return "(none)";
   const effort = resolveEffort(entry);
@@ -647,7 +637,8 @@ let activeChild = null;
 
 function runProcess(command, cwd, { timeoutMs = DEFAULT_API_TIMEOUT_MS, firstOutputTimeoutMs = 0, onStdout, onStderr } = {}) {
   return new Promise((resolvePromise) => {
-    const child = spawn(command.bin, command.args, {
+    const preparedCommand = prepareSpawnCommand(command);
+    const child = spawn(preparedCommand.bin, preparedCommand.args, {
       cwd,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
